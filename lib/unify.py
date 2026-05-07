@@ -1,0 +1,561 @@
+#!/usr/bin/env python3
+"""Aggregate per-tool outputs from scan.sh into a unified report (JSON + Markdown).
+
+Each parser is tolerant: missing files, empty results, or schema drift are
+treated as "no findings from that tool" rather than fatal errors.
+"""
+from __future__ import annotations
+
+import argparse
+import csv
+import datetime as dt
+import json
+import os
+import re
+import sys
+import xml.etree.ElementTree as ET
+from collections import Counter, defaultdict
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import Any, Iterable
+
+VERSION = "1.0.0"
+
+# ── Vulnerability category taxonomy ─────────────────────────────────────────
+# Aligned with the 8 classes in SECURITY-TOOLS.md, plus three "adjacent"
+# buckets for tools that step outside SAST proper.
+CATEGORIES = [
+    "injection",            # SQL, cmd, code, XSS, XXE, ReDoS
+    "path_network",         # path traversal, SSRF, open redirect
+    "auth_access",          # authn bypass, IDOR, CSRF, race
+    "memory_safety",        # buffer/integer overflow, UAF, unsafe
+    "cryptography",         # weak primitives, JWT alg=none, timing
+    "deserialization",      # pickle, readObject, yaml.load
+    "protocol_encoding",    # cache, encoding confusion, length-prefix
+    "secrets",              # credentials in code (trufflehog)
+    "dependency",           # known-CVE pulled-in dep (trivy fs)
+    "iac_misconfiguration", # IaC findings (trivy fs)
+    "uncategorized",
+]
+
+# CWE → category (best-effort)
+CWE_CATEGORY = {
+    # Injection
+    "CWE-77": "injection", "CWE-78": "injection", "CWE-79": "injection",
+    "CWE-89": "injection", "CWE-91": "injection", "CWE-94": "injection",
+    "CWE-95": "injection", "CWE-611": "injection", "CWE-643": "injection",
+    "CWE-1333": "injection", "CWE-400": "injection",  # ReDoS
+    # Path & network
+    "CWE-22": "path_network", "CWE-23": "path_network", "CWE-36": "path_network",
+    "CWE-918": "path_network", "CWE-601": "path_network",
+    # Auth & access
+    "CWE-285": "auth_access", "CWE-287": "auth_access", "CWE-306": "auth_access",
+    "CWE-352": "auth_access", "CWE-639": "auth_access", "CWE-862": "auth_access",
+    "CWE-863": "auth_access", "CWE-269": "auth_access", "CWE-362": "auth_access",
+    "CWE-367": "auth_access",
+    # Memory safety
+    "CWE-119": "memory_safety", "CWE-120": "memory_safety", "CWE-121": "memory_safety",
+    "CWE-122": "memory_safety", "CWE-125": "memory_safety", "CWE-126": "memory_safety",
+    "CWE-127": "memory_safety", "CWE-190": "memory_safety", "CWE-191": "memory_safety",
+    "CWE-415": "memory_safety", "CWE-416": "memory_safety", "CWE-787": "memory_safety",
+    "CWE-680": "memory_safety", "CWE-476": "memory_safety", "CWE-401": "memory_safety",
+    # Crypto
+    "CWE-261": "cryptography", "CWE-310": "cryptography", "CWE-326": "cryptography",
+    "CWE-327": "cryptography", "CWE-328": "cryptography", "CWE-329": "cryptography",
+    "CWE-330": "cryptography", "CWE-338": "cryptography", "CWE-347": "cryptography",
+    "CWE-916": "cryptography", "CWE-1240": "cryptography",
+    # Deserialization
+    "CWE-502": "deserialization",
+    # Protocol & encoding
+    "CWE-444": "protocol_encoding", "CWE-113": "protocol_encoding",
+    "CWE-93": "protocol_encoding", "CWE-176": "protocol_encoding",
+    "CWE-697": "protocol_encoding",
+    # Secrets / dep / IaC
+    "CWE-798": "secrets", "CWE-200": "secrets",
+    "CWE-1104": "dependency", "CWE-937": "dependency",
+    "CWE-16": "iac_misconfiguration",
+}
+
+# Bandit test IDs → category (https://bandit.readthedocs.io/en/latest/plugins/)
+BANDIT_CATEGORY = {
+    # B1xx misc, B2xx app, B3xx blacklist (deser), B4xx import, B5xx crypto, B6xx inject, B7xx framework
+    "B301": "deserialization", "B302": "deserialization", "B303": "cryptography",
+    "B304": "cryptography", "B305": "cryptography", "B306": "path_network",
+    "B307": "injection", "B308": "injection", "B310": "path_network",
+    "B311": "cryptography", "B312": "protocol_encoding", "B313": "injection",
+    "B314": "injection", "B315": "injection", "B316": "injection",
+    "B317": "injection", "B318": "injection", "B319": "injection",
+    "B320": "injection", "B321": "path_network", "B323": "protocol_encoding",
+    "B324": "cryptography", "B325": "memory_safety",
+    "B501": "cryptography", "B502": "cryptography", "B503": "cryptography",
+    "B504": "cryptography", "B505": "cryptography", "B506": "deserialization",
+    "B507": "auth_access",
+    "B601": "injection", "B602": "injection", "B603": "injection",
+    "B604": "injection", "B605": "injection", "B606": "injection",
+    "B607": "injection", "B608": "injection", "B609": "injection",
+    "B610": "injection", "B611": "injection",
+    "B701": "injection", "B702": "injection", "B703": "injection",
+}
+
+# gosec rule IDs → category (https://github.com/securego/gosec)
+GOSEC_CATEGORY = {
+    "G101": "secrets", "G102": "auth_access", "G103": "memory_safety",
+    "G104": "auth_access", "G106": "auth_access", "G107": "path_network",
+    "G108": "auth_access", "G109": "memory_safety", "G110": "memory_safety",
+    "G111": "path_network", "G112": "memory_safety", "G114": "protocol_encoding",
+    "G201": "injection", "G202": "injection", "G203": "injection",
+    "G204": "injection",
+    "G301": "auth_access", "G302": "auth_access", "G303": "auth_access",
+    "G304": "path_network", "G305": "path_network", "G306": "auth_access",
+    "G307": "auth_access",
+    "G401": "cryptography", "G402": "cryptography", "G403": "cryptography",
+    "G404": "cryptography", "G405": "cryptography", "G406": "cryptography",
+    "G407": "cryptography",
+    "G501": "cryptography", "G502": "cryptography", "G503": "cryptography",
+    "G504": "cryptography", "G505": "cryptography",
+    "G601": "memory_safety", "G602": "memory_safety",
+}
+
+SEVERITY_ORDER = {"critical": 4, "high": 3, "medium": 2, "low": 1, "info": 0}
+
+
+def normalise_severity(raw: str | None) -> str:
+    if not raw:
+        return "info"
+    s = str(raw).lower().strip()
+    if s in ("critical", "crit"):
+        return "critical"
+    if s in ("error", "high"):
+        return "high"
+    if s in ("warning", "medium", "med", "moderate"):
+        return "medium"
+    if s in ("note", "info", "informational", "style", "performance", "portability"):
+        return "info"
+    if s in ("low",):
+        return "low"
+    return "info"
+
+
+@dataclass
+class Finding:
+    tool: str
+    rule_id: str
+    category: str
+    severity: str
+    file: str
+    line_start: int = 0
+    line_end: int = 0
+    message: str = ""
+    cwe: list[str] = field(default_factory=list)
+    snippet: str = ""
+    url: str = ""
+
+
+def category_from_cwe(cwes: Iterable[str]) -> str | None:
+    for c in cwes:
+        m = re.search(r"CWE-\d+", c)
+        if m and m.group(0) in CWE_CATEGORY:
+            return CWE_CATEGORY[m.group(0)]
+    return None
+
+
+def safe_load_json(path: Path) -> Any:
+    try:
+        if not path.exists() or path.stat().st_size == 0:
+            return None
+        return json.loads(path.read_text(encoding="utf-8", errors="replace"))
+    except Exception as e:
+        print(f"[warn] failed to parse {path}: {e}", file=sys.stderr)
+        return None
+
+
+def relpath(p: str, base: str) -> str:
+    try:
+        return os.path.relpath(p, base)
+    except Exception:
+        return p
+
+
+# ── Per-tool parsers ────────────────────────────────────────────────────────
+def parse_semgrep(path: Path, scan_dir: str) -> list[Finding]:
+    data = safe_load_json(path)
+    if not data:
+        return []
+    out = []
+    for r in data.get("results", []):
+        meta = r.get("extra", {}).get("metadata", {})
+        cwes = []
+        for c in meta.get("cwe", []) or []:
+            m = re.search(r"CWE-\d+", c)
+            if m:
+                cwes.append(m.group(0))
+        category = category_from_cwe(cwes) or "uncategorized"
+        out.append(Finding(
+            tool="semgrep",
+            rule_id=r.get("check_id", ""),
+            category=category,
+            severity=normalise_severity(r.get("extra", {}).get("severity")),
+            file=relpath(r.get("path", ""), scan_dir),
+            line_start=int(r.get("start", {}).get("line", 0) or 0),
+            line_end=int(r.get("end", {}).get("line", 0) or 0),
+            message=r.get("extra", {}).get("message", "").strip(),
+            cwe=cwes,
+            snippet=(r.get("extra", {}).get("lines") or "").strip()[:300],
+            url=meta.get("source", "") or "",
+        ))
+    return out
+
+
+def parse_bandit(path: Path, scan_dir: str) -> list[Finding]:
+    data = safe_load_json(path)
+    if not data:
+        return []
+    out = []
+    for r in data.get("results", []):
+        test_id = r.get("test_id", "")
+        cwes = []
+        cwe_field = r.get("issue_cwe") or {}
+        if isinstance(cwe_field, dict) and "id" in cwe_field:
+            cwes.append(f"CWE-{cwe_field['id']}")
+        category = (
+            category_from_cwe(cwes)
+            or BANDIT_CATEGORY.get(test_id)
+            or "uncategorized"
+        )
+        out.append(Finding(
+            tool="bandit",
+            rule_id=test_id,
+            category=category,
+            severity=normalise_severity(r.get("issue_severity")),
+            file=relpath(r.get("filename", ""), scan_dir),
+            line_start=int(r.get("line_number", 0) or 0),
+            line_end=int(r.get("line_number", 0) or 0),
+            message=(r.get("issue_text") or "").strip(),
+            cwe=cwes,
+            snippet=(r.get("code") or "").strip()[:300],
+            url=(r.get("more_info") or ""),
+        ))
+    return out
+
+
+def parse_gosec(path: Path, scan_dir: str) -> list[Finding]:
+    data = safe_load_json(path)
+    if not data:
+        return []
+    out = []
+    for r in data.get("Issues", []):
+        rule_id = r.get("rule_id", "")
+        cwes = []
+        cwe_field = r.get("cwe") or {}
+        if isinstance(cwe_field, dict) and "ID" in cwe_field:
+            cwes.append(f"CWE-{cwe_field['ID']}")
+        category = (
+            category_from_cwe(cwes)
+            or GOSEC_CATEGORY.get(rule_id)
+            or "uncategorized"
+        )
+        line_str = str(r.get("line", "0"))
+        line_start = int(line_str.split("-")[0] or 0)
+        line_end = int(line_str.split("-")[-1] or line_start)
+        out.append(Finding(
+            tool="gosec",
+            rule_id=rule_id,
+            category=category,
+            severity=normalise_severity(r.get("severity")),
+            file=relpath(r.get("file", ""), scan_dir),
+            line_start=line_start,
+            line_end=line_end,
+            message=(r.get("details") or "").strip(),
+            cwe=cwes,
+            snippet=(r.get("code") or "").strip()[:300],
+        ))
+    return out
+
+
+def parse_cppcheck(path: Path, scan_dir: str) -> list[Finding]:
+    if not path.exists() or path.stat().st_size == 0:
+        return []
+    try:
+        tree = ET.parse(path)
+    except ET.ParseError:
+        return []
+    out = []
+    for err in tree.iterfind(".//error"):
+        cwe_id = err.get("cwe")
+        cwes = [f"CWE-{cwe_id}"] if cwe_id else []
+        category = category_from_cwe(cwes) or "memory_safety"
+        loc = err.find("location")
+        file_ = loc.get("file") if loc is not None else ""
+        line_ = int(loc.get("line", "0") or 0) if loc is not None else 0
+        out.append(Finding(
+            tool="cppcheck",
+            rule_id=err.get("id", ""),
+            category=category,
+            severity=normalise_severity(err.get("severity")),
+            file=relpath(file_, scan_dir),
+            line_start=line_,
+            line_end=line_,
+            message=(err.get("msg") or "").strip(),
+            cwe=cwes,
+        ))
+    return out
+
+
+def parse_flawfinder(path: Path, scan_dir: str) -> list[Finding]:
+    if not path.exists() or path.stat().st_size == 0:
+        return []
+    out = []
+    with path.open(encoding="utf-8", errors="replace") as fh:
+        reader = csv.DictReader(fh)
+        for row in reader:
+            cwes_raw = row.get("CWEs", "") or ""
+            cwes = [f"CWE-{x.strip()}" for x in cwes_raw.split(",") if x.strip().isdigit()]
+            category = category_from_cwe(cwes) or "memory_safety"
+            try:
+                level = int(row.get("Level", "0") or 0)
+            except ValueError:
+                level = 0
+            severity = "high" if level >= 4 else "medium" if level >= 2 else "low"
+            out.append(Finding(
+                tool="flawfinder",
+                rule_id=row.get("Name", ""),
+                category=category,
+                severity=severity,
+                file=relpath(row.get("File", ""), scan_dir),
+                line_start=int(row.get("Line", "0") or 0),
+                line_end=int(row.get("Line", "0") or 0),
+                message=(row.get("Warning") or "").strip(),
+                cwe=cwes,
+                snippet=(row.get("Context") or "").strip()[:300],
+            ))
+    return out
+
+
+def parse_trufflehog(path: Path, scan_dir: str) -> list[Finding]:
+    if not path.exists() or path.stat().st_size == 0:
+        return []
+    out = []
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            r = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        meta = (r.get("SourceMetadata") or {}).get("Data") or {}
+        fs = meta.get("Filesystem") or {}
+        verified = bool(r.get("Verified"))
+        out.append(Finding(
+            tool="trufflehog",
+            rule_id=r.get("DetectorName", "secret"),
+            category="secrets",
+            severity="critical" if verified else "high",
+            file=relpath(fs.get("file", ""), scan_dir),
+            line_start=int(fs.get("line", 0) or 0),
+            line_end=int(fs.get("line", 0) or 0),
+            message=f"{r.get('DetectorName', 'unknown')} secret detected"
+                    + (" (verified)" if verified else ""),
+            cwe=["CWE-798"],
+        ))
+    return out
+
+
+def parse_trivy(path: Path, scan_dir: str) -> list[Finding]:
+    data = safe_load_json(path)
+    if not data:
+        return []
+    out = []
+    for tgt in data.get("Results", []) or []:
+        tgt_path = tgt.get("Target", "")
+        for v in tgt.get("Vulnerabilities", []) or []:
+            cwes = [c for c in (v.get("CweIDs") or []) if c.startswith("CWE-")]
+            out.append(Finding(
+                tool="trivy",
+                rule_id=v.get("VulnerabilityID", ""),
+                category="dependency",
+                severity=normalise_severity(v.get("Severity")),
+                file=relpath(tgt_path, scan_dir),
+                message=f"{v.get('PkgName')} {v.get('InstalledVersion')} → {v.get('Title', '').strip()}",
+                cwe=cwes,
+                url=(v.get("PrimaryURL") or ""),
+            ))
+        for m in tgt.get("Misconfigurations", []) or []:
+            out.append(Finding(
+                tool="trivy",
+                rule_id=m.get("ID", ""),
+                category="iac_misconfiguration",
+                severity=normalise_severity(m.get("Severity")),
+                file=relpath(tgt_path, scan_dir),
+                line_start=int((m.get("CauseMetadata") or {}).get("StartLine", 0) or 0),
+                line_end=int((m.get("CauseMetadata") or {}).get("EndLine", 0) or 0),
+                message=(m.get("Title") or m.get("Description") or "").strip(),
+            ))
+        for s in tgt.get("Secrets", []) or []:
+            out.append(Finding(
+                tool="trivy",
+                rule_id=s.get("RuleID", ""),
+                category="secrets",
+                severity=normalise_severity(s.get("Severity")),
+                file=relpath(tgt_path, scan_dir),
+                line_start=int(s.get("StartLine", 0) or 0),
+                line_end=int(s.get("EndLine", 0) or 0),
+                message=(s.get("Title") or "").strip(),
+                cwe=["CWE-798"],
+            ))
+    return out
+
+
+def parse_regexploit(path: Path, label: str) -> list[Finding]:
+    """Best-effort: regexploit emits free text. Each starred regex line is one finding."""
+    if not path.exists() or path.stat().st_size == 0:
+        return []
+    out = []
+    text = path.read_text(encoding="utf-8", errors="replace")
+    # rough: look for lines starting with "Vulnerable regex"
+    for chunk in re.split(r"\n(?=Vulnerable regex|Worst-case)", text):
+        chunk = chunk.strip()
+        if not chunk or "Vulnerable" not in chunk:
+            continue
+        m = re.search(r"([^\s]+\.(py|js|ts|tsx|jsx)):(\d+)", chunk)
+        file_ = m.group(1) if m else ""
+        line_ = int(m.group(3)) if m else 0
+        out.append(Finding(
+            tool=f"regexploit ({label})",
+            rule_id="REDOS",
+            category="injection",
+            severity="medium",
+            file=file_,
+            line_start=line_,
+            line_end=line_,
+            message=chunk.splitlines()[0][:200],
+            cwe=["CWE-1333"],
+        ))
+    return out
+
+
+# ── Aggregation ─────────────────────────────────────────────────────────────
+def render_markdown(report: dict) -> str:
+    lines = []
+    lines.append(f"# vuln-scan report")
+    lines.append("")
+    lines.append(f"- **scanned**: {report['scanned_at']}")
+    lines.append(f"- **target**: `{report['target']['type']}` — `{report['target']['source']}`")
+    if report["target"].get("commit"):
+        lines.append(f"- **commit**: `{report['target']['commit']}`")
+    lines.append(f"- **total findings**: {report['summary']['total_findings']}")
+    lines.append("")
+
+    lines.append("## Severity")
+    lines.append("")
+    lines.append("| severity | count |")
+    lines.append("|---|---|")
+    for sev in ("critical", "high", "medium", "low", "info"):
+        n = report["summary"]["by_severity"].get(sev, 0)
+        lines.append(f"| {sev} | {n} |")
+    lines.append("")
+
+    lines.append("## Category")
+    lines.append("")
+    lines.append("| category | count |")
+    lines.append("|---|---|")
+    for cat in CATEGORIES:
+        n = report["summary"]["by_category"].get(cat, 0)
+        if n:
+            lines.append(f"| {cat} | {n} |")
+    lines.append("")
+
+    lines.append("## Tool")
+    lines.append("")
+    lines.append("| tool | count |")
+    lines.append("|---|---|")
+    for tool, n in sorted(report["summary"]["by_tool"].items(), key=lambda kv: -kv[1]):
+        lines.append(f"| {tool} | {n} |")
+    lines.append("")
+
+    # Top findings (highest severity first)
+    findings = report["findings"]
+    findings_sorted = sorted(findings, key=lambda f: -SEVERITY_ORDER.get(f["severity"], 0))
+    top = findings_sorted[:50]
+    if top:
+        lines.append(f"## Top findings ({len(top)} of {len(findings)})")
+        lines.append("")
+        for f in top:
+            loc = f["file"]
+            if f.get("line_start"):
+                loc += f":{f['line_start']}"
+            cwe = ", ".join(f.get("cwe") or []) or "—"
+            lines.append(
+                f"- **[{f['severity']}]** `{f['tool']}` `{f['rule_id']}` "
+                f"({f['category']}, {cwe}) — `{loc}`"
+            )
+            if f.get("message"):
+                lines.append(f"  - {f['message']}")
+        lines.append("")
+
+    return "\n".join(lines) + "\n"
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--raw-dir", required=True)
+    ap.add_argument("--output-dir", required=True)
+    ap.add_argument("--target-type", required=True)
+    ap.add_argument("--target-source", required=True)
+    ap.add_argument("--target-commit", default="")
+    ap.add_argument("--scan-dir", required=True)
+    args = ap.parse_args()
+
+    raw = Path(args.raw_dir)
+    scan_dir = args.scan_dir
+
+    findings: list[Finding] = []
+    findings += parse_semgrep(raw / "semgrep.json", scan_dir)
+    findings += parse_bandit(raw / "bandit.json", scan_dir)
+    findings += parse_gosec(raw / "gosec.json", scan_dir)
+    findings += parse_cppcheck(raw / "cppcheck.xml", scan_dir)
+    findings += parse_flawfinder(raw / "flawfinder.csv", scan_dir)
+    findings += parse_trufflehog(raw / "trufflehog.jsonl", scan_dir)
+    findings += parse_trivy(raw / "trivy.json", scan_dir)
+    findings += parse_regexploit(raw / "regexploit-py.txt", "py")
+    findings += parse_regexploit(raw / "regexploit-js.txt", "js")
+
+    # Summaries
+    by_sev = Counter(f.severity for f in findings)
+    by_cat = Counter(f.category for f in findings)
+    by_tool = Counter(f.tool for f in findings)
+
+    report = {
+        "tool": "vuln-scan",
+        "version": VERSION,
+        "scanned_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
+        "target": {
+            "type": args.target_type,
+            "source": args.target_source,
+            "commit": args.target_commit,
+        },
+        "summary": {
+            "total_findings": len(findings),
+            "by_severity": dict(by_sev),
+            "by_category": dict(by_cat),
+            "by_tool": dict(by_tool),
+        },
+        "findings": [asdict(f) for f in findings],
+    }
+
+    out = Path(args.output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "report.json").write_text(json.dumps(report, indent=2))
+    (out / "report.md").write_text(render_markdown(report))
+
+    print(
+        f"vuln-scan: {len(findings)} finding(s) "
+        f"[{by_sev.get('critical', 0)}c / {by_sev.get('high', 0)}h / "
+        f"{by_sev.get('medium', 0)}m / {by_sev.get('low', 0)}l / {by_sev.get('info', 0)}i]",
+        file=sys.stderr,
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
