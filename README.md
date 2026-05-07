@@ -20,7 +20,23 @@ Markdown report so an AI agent (or a human) can ingest the findings.
 Tools that don't apply (no Python files? bandit is skipped) self-skip based on
 filetype detection.
 
-## Install (Debian/Ubuntu — devenv VM)
+## Run via Docker (recommended)
+
+A prebuilt image is published to GHCR by CI on every push to `main`:
+
+```sh
+# Scan a git URL (no host install needed)
+docker run --rm ghcr.io/reaandrew/vuln-scan:latest \
+    https://github.com/owner/repo.git -o /tmp/out --keep
+
+# Scan a local directory (mount it into /work)
+docker run --rm -v "$PWD":/work ghcr.io/reaandrew/vuln-scan:latest \
+    /work -o /work/results
+```
+
+Tags: `latest`, `main`, `sha-<short>`, and `vX.Y.Z` for git tags.
+
+## Install locally (Debian/Ubuntu — devenv VM)
 
 ```sh
 ./install.sh
