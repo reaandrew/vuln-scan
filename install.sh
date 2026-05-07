@@ -32,6 +32,25 @@ if ! command -v trufflehog >/dev/null; then
         | sudo tar -xzC /usr/local/bin trufflehog
 fi
 
+log "gitleaks (release tarball)"
+if ! command -v gitleaks >/dev/null; then
+    GL_VER="$(curl -fsSL https://api.github.com/repos/gitleaks/gitleaks/releases/latest | jq -r .tag_name | sed 's/^v//')"
+    curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v${GL_VER}/gitleaks_${GL_VER}_linux_x64.tar.gz" \
+        | sudo tar -xzC /usr/local/bin gitleaks
+fi
+
+log "osv-scanner (release tarball)"
+if ! command -v osv-scanner >/dev/null; then
+    sudo curl -fsSL -o /usr/local/bin/osv-scanner \
+        "https://github.com/google/osv-scanner/releases/latest/download/osv-scanner_linux_amd64"
+    sudo chmod +x /usr/local/bin/osv-scanner
+fi
+
+log "checkov + njsscan via pipx"
+for t in checkov njsscan; do
+    pipx install --quiet "$t" 2>/dev/null || pipx upgrade --quiet "$t" 2>/dev/null || true
+done
+
 log "trivy (aquasecurity apt repo)"
 if ! command -v trivy >/dev/null; then
     sudo install -m 0755 -d /etc/apt/keyrings

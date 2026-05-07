@@ -1,0 +1,7 @@
+.git/
+.github/
+bench/
+docs/
+*.md
+!README.md
+.dockerignore

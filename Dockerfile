@@ -38,7 +38,9 @@ ENV PIPX_HOME=/opt/pipx
 ENV PIPX_BIN_DIR=/usr/local/bin
 RUN pipx install --global semgrep \
  && pipx install --global bandit \
- && pipx install --global regexploit
+ && pipx install --global regexploit \
+ && pipx install --global checkov \
+ && pipx install --global njsscan
 
 # ── gosec via go install (pinned-by-tag for reproducibility) ────────────
 ENV GOPATH=/opt/go
@@ -52,6 +54,16 @@ RUN ARCH="$(dpkg --print-architecture)" \
  && TH_VER="$(curl -fsSL https://api.github.com/repos/trufflesecurity/trufflehog/releases/latest | jq -r .tag_name | sed 's/^v//')" \
  && curl -fsSL "https://github.com/trufflesecurity/trufflehog/releases/download/v${TH_VER}/trufflehog_${TH_VER}_linux_${ARCH}.tar.gz" \
         | tar -xzC /usr/local/bin trufflehog
+
+# ── gitleaks (release tarball) ──────────────────────────────────────────
+RUN GL_VER="$(curl -fsSL https://api.github.com/repos/gitleaks/gitleaks/releases/latest | jq -r .tag_name | sed 's/^v//')" \
+ && curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v${GL_VER}/gitleaks_${GL_VER}_linux_x64.tar.gz" \
+        | tar -xzC /usr/local/bin gitleaks
+
+# ── osv-scanner (single binary) ─────────────────────────────────────────
+RUN curl -fsSL -o /usr/local/bin/osv-scanner \
+        "https://github.com/google/osv-scanner/releases/latest/download/osv-scanner_linux_amd64" \
+ && chmod +x /usr/local/bin/osv-scanner
 
 # ── trivy via aquasecurity apt repo ─────────────────────────────────────
 RUN install -m 0755 -d /etc/apt/keyrings \

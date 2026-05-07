@@ -1,0 +1,10 @@
+# OWASP NodeGoat — files known to contain at least one intentional flaw
+# (per the project's documented A1-A10 tutorial mapping).
+app/routes/contributions.js
+app/routes/research.js
+app/routes/profile.js
+app/routes/session.js
+app/data/allocations-dao.js
+app/data/profile-dao.js
+app/data/user-dao.js
+app/data/research-dao.js

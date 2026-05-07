@@ -406,6 +406,118 @@ def parse_trivy(path: Path, scan_dir: str) -> list[Finding]:
     return out
 
 
+def parse_gitleaks(path: Path, scan_dir: str) -> list[Finding]:
+    data = safe_load_json(path)
+    if not data:
+        return []
+    out = []
+    items = data if isinstance(data, list) else data.get("findings", [])
+    for r in items:
+        out.append(Finding(
+            tool="gitleaks",
+            rule_id=r.get("RuleID") or r.get("Rule") or "gitleaks-secret",
+            category="secrets",
+            severity="high",
+            file=relpath(r.get("File", ""), scan_dir),
+            line_start=int(r.get("StartLine", 0) or 0),
+            line_end=int(r.get("EndLine", 0) or 0),
+            message=(r.get("Description") or r.get("Match") or "secret detected").strip()[:300],
+            cwe=["CWE-798"],
+        ))
+    return out
+
+
+def parse_osv(path: Path, scan_dir: str) -> list[Finding]:
+    data = safe_load_json(path)
+    if not data:
+        return []
+    out = []
+    for res in data.get("results", []) or []:
+        src = (res.get("source") or {}).get("path", "")
+        for pkg in res.get("packages", []) or []:
+            pkg_name = (pkg.get("package") or {}).get("name", "")
+            for v in pkg.get("vulnerabilities", []) or []:
+                cwes = [c for c in (v.get("database_specific") or {}).get("cwe_ids", []) or []
+                        if isinstance(c, str) and c.startswith("CWE-")]
+                sev = "high"
+                for s in v.get("severity", []) or []:
+                    if (s.get("type") or "").upper() == "CVSS_V3":
+                        sev = normalise_severity(s.get("score", "")[:1])
+                out.append(Finding(
+                    tool="osv-scanner",
+                    rule_id=v.get("id", ""),
+                    category="dependency",
+                    severity=sev,
+                    file=relpath(src, scan_dir),
+                    message=f"{pkg_name} → {v.get('summary', '')}".strip()[:300],
+                    cwe=cwes,
+                    url=(v.get("references") or [{}])[0].get("url", "") if v.get("references") else "",
+                ))
+    return out
+
+
+def parse_njsscan(path: Path, scan_dir: str) -> list[Finding]:
+    data = safe_load_json(path)
+    if not data:
+        return []
+    out = []
+    for section in ("nodejs", "templates"):
+        block = data.get(section) or {}
+        for rule_id, payload in block.items():
+            meta = payload.get("metadata", {}) or {}
+            sev = normalise_severity(meta.get("severity"))
+            cwes = []
+            cwe_field = meta.get("cwe")
+            if isinstance(cwe_field, str):
+                m = re.search(r"CWE-\d+", cwe_field)
+                if m:
+                    cwes.append(m.group(0))
+            category = category_from_cwe(cwes) or "uncategorized"
+            for f in payload.get("files", []) or []:
+                out.append(Finding(
+                    tool="njsscan",
+                    rule_id=rule_id,
+                    category=category,
+                    severity=sev,
+                    file=relpath(f.get("file_path", ""), scan_dir),
+                    line_start=int(f.get("match_lines", [0])[0] or 0),
+                    line_end=int((f.get("match_lines") or [0, 0])[-1] or 0),
+                    message=(meta.get("description") or "").strip()[:300],
+                    cwe=cwes,
+                    snippet=(f.get("match_string") or "").strip()[:300],
+                ))
+    return out
+
+
+def parse_checkov(path: Path, scan_dir: str) -> list[Finding]:
+    data = safe_load_json(path)
+    if not data:
+        return []
+    out = []
+    blocks = data if isinstance(data, list) else [data]
+    for block in blocks:
+        results = (block.get("results") or {}).get("failed_checks", []) or []
+        for r in results:
+            cwes = []
+            for g in r.get("guideline", "") or "":
+                m = re.search(r"CWE-\d+", g)
+                if m:
+                    cwes.append(m.group(0))
+            out.append(Finding(
+                tool="checkov",
+                rule_id=r.get("check_id", ""),
+                category="iac_misconfiguration",
+                severity=normalise_severity((r.get("severity") or "").lower()),
+                file=relpath(r.get("file_path", "").lstrip("/"), scan_dir),
+                line_start=int(((r.get("file_line_range") or [0, 0])[0]) or 0),
+                line_end=int(((r.get("file_line_range") or [0, 0])[-1]) or 0),
+                message=(r.get("check_name") or "").strip(),
+                cwe=cwes,
+                url=(r.get("guideline") or ""),
+            ))
+    return out
+
+
 def parse_regexploit(path: Path, label: str) -> list[Finding]:
     """Best-effort: regexploit emits free text. Each starred regex line is one finding."""
     if not path.exists() or path.stat().st_size == 0:
@@ -516,7 +628,11 @@ def main() -> int:
     findings += parse_cppcheck(raw / "cppcheck.xml", scan_dir)
     findings += parse_flawfinder(raw / "flawfinder.csv", scan_dir)
     findings += parse_trufflehog(raw / "trufflehog.jsonl", scan_dir)
+    findings += parse_gitleaks(raw / "gitleaks.json", scan_dir)
     findings += parse_trivy(raw / "trivy.json", scan_dir)
+    findings += parse_osv(raw / "osv.json", scan_dir)
+    findings += parse_njsscan(raw / "njsscan.json", scan_dir)
+    findings += parse_checkov(raw / "checkov.json", scan_dir)
     findings += parse_regexploit(raw / "regexploit-py.txt", "py")
     findings += parse_regexploit(raw / "regexploit-js.txt", "js")
 

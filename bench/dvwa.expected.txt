@@ -1,0 +1,39 @@
+# Files in DVWA that a static analyser should produce at least one
+# finding for. Excludes impossible.php (those go in dvwa.fp.txt) and
+# runtime-only modules (brute, captcha).
+vulnerabilities/exec/source/low.php
+vulnerabilities/exec/source/medium.php
+vulnerabilities/exec/source/high.php
+vulnerabilities/sqli/source/low.php
+vulnerabilities/sqli/source/medium.php
+vulnerabilities/sqli/source/high.php
+vulnerabilities/sqli_blind/source/low.php
+vulnerabilities/sqli_blind/source/medium.php
+vulnerabilities/sqli_blind/source/high.php
+vulnerabilities/xss_r/source/low.php
+vulnerabilities/xss_r/source/medium.php
+vulnerabilities/xss_r/source/high.php
+vulnerabilities/xss_s/source/low.php
+vulnerabilities/xss_s/source/medium.php
+vulnerabilities/xss_s/source/high.php
+vulnerabilities/xss_d/source/low.php
+vulnerabilities/xss_d/source/medium.php
+vulnerabilities/xss_d/source/high.php
+vulnerabilities/fi/source/low.php
+vulnerabilities/fi/source/medium.php
+vulnerabilities/fi/source/high.php
+vulnerabilities/upload/source/low.php
+vulnerabilities/upload/source/medium.php
+vulnerabilities/upload/source/high.php
+vulnerabilities/csrf/source/low.php
+vulnerabilities/csrf/source/medium.php
+vulnerabilities/csrf/source/high.php
+vulnerabilities/open_redirect/source/low.php
+vulnerabilities/open_redirect/source/medium.php
+vulnerabilities/open_redirect/source/high.php
+vulnerabilities/weak_id/source/low.php
+vulnerabilities/weak_id/source/medium.php
+vulnerabilities/weak_id/source/high.php
+vulnerabilities/cryptography/source/low.php
+vulnerabilities/cryptography/source/medium.php
+vulnerabilities/cryptography/source/high.php

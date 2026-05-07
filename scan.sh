@@ -76,7 +76,7 @@ detect_lang() {
 TOTAL=2  # detect + aggregate
 [[ "$TARGET_TYPE" == "git" ]] && TOTAL=$((TOTAL + 1))
 TOTAL=$((TOTAL + 1))            # semgrep (always)
-TOTAL=$((TOTAL + 2))            # trufflehog + trivy (always)
+TOTAL=$((TOTAL + 4))            # trufflehog + gitleaks + trivy + osv-scanner (always)
 # Conditionals are computed after clone; bump the counter dynamically.
 export STEP_TOTAL=$TOTAL
 
@@ -157,11 +157,31 @@ if [[ $HAS_C -eq 1 ]]; then
         bash -c "flawfinder --csv --quiet '$SCAN_DIR' > '$RAW/flawfinder.csv'"
 fi
 
+# njsscan — JS/Node specific (skipped silently when no JS files)
+if [[ $HAS_JS -eq 1 ]] && command -v njsscan >/dev/null; then
+    export STEP_TOTAL=$((STEP_TOTAL + 1))
+    step_run "njsscan" "$RAW/njsscan.json" \
+        bash -c "njsscan -o '$RAW/njsscan.json' --json '$SCAN_DIR' 2>/dev/null || true"
+fi
+
+# checkov — IaC (Terraform / k8s / CFN / ARM / Helm).
+if command -v checkov >/dev/null; then
+    export STEP_TOTAL=$((STEP_TOTAL + 1))
+    step_run "checkov" "$RAW/checkov.json" \
+        bash -c "checkov -d '$SCAN_DIR' -o json --quiet --compact > '$RAW/checkov.json' 2>/dev/null || true"
+fi
+
 step_run "trufflehog" "$RAW/trufflehog.jsonl" \
     bash -c "trufflehog filesystem '$SCAN_DIR' --json --no-update --no-verification > '$RAW/trufflehog.jsonl' 2>/dev/null"
 
+step_run "gitleaks" "$RAW/gitleaks.json" \
+    bash -c "gitleaks detect --source '$SCAN_DIR' --report-format json --report-path '$RAW/gitleaks.json' --no-banner --exit-code 0 2>/dev/null"
+
 step_run "trivy" "$RAW/trivy.json" \
     bash -c "trivy fs --quiet --format json --output '$RAW/trivy.json' '$SCAN_DIR'"
+
+step_run "osv-scanner" "$RAW/osv.json" \
+    bash -c "osv-scanner --format json --output '$RAW/osv.json' --recursive '$SCAN_DIR' 2>/dev/null || true"
 
 # ── Aggregate ────────────────────────────────────────────────────────────
 step_run "aggregate" "" \

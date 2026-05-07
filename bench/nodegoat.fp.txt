@@ -1,0 +1,6 @@
+# NodeGoat third-party vendor files — should not produce findings.
+# Tracked here so a regression that floods us with vendor-code noise
+# is visible.
+app/assets/vendor/jquery.min.js
+app/assets/vendor/bootstrap/bootstrap.js
+app/assets/vendor/html5shiv.js

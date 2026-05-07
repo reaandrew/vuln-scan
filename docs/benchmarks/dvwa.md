@@ -157,6 +157,7 @@ current rule-pack config), and emits:
 | 2026-05-07 | 17% (6/36)  | 0 | baseline, default rule packs (`p/security-audit`, `p/owasp-top-ten`, `p/cwe-top-25`) |
 | 2026-05-07 | 22% (8/36)  | 1 | iter 1: added `p/xss`, `p/php`, `p/insecure-transport`, `p/jwt` |
 | 2026-05-07 | 52% (19/36) | 3 | iter 2: added 5 hand-written rules in `rules/php-web.yml` (XSS string-concat, unrestricted upload, open redirect, weak session id, weak hash). `upload`/`csrf`/`open_redirect` all 3 tiers; XSS partial; weak_id partial |
+| 2026-05-07 | 55% (20/36) | 3 | iter 3: added gitleaks, osv-scanner, njsscan, checkov to the toolchain (no new PHP rules — picks up adjacent classes). |
 
 ### Remaining gaps after iter 2
 

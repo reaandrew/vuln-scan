@@ -1,0 +1,5 @@
+# django.nV — files known to contain at least one intentional flaw.
+# (SQL injection in views.py:183, command injection in misc.py:33,
+# plus assorted XSS via {{ x|safe }} in templates.)
+taskManager/views.py
+taskManager/misc.py

@@ -1,0 +1,4 @@
+# django.nV — Django framework files (auto-generated, third-party).
+taskManager/migrations/__init__.py
+taskManager/wsgi.py
+manage.py

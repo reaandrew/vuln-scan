@@ -1,0 +1,14 @@
+# DVWA files that are deliberately secure. Any finding here is a false
+# positive and counts against precision.
+vulnerabilities/exec/source/impossible.php
+vulnerabilities/sqli/source/impossible.php
+vulnerabilities/sqli_blind/source/impossible.php
+vulnerabilities/xss_r/source/impossible.php
+vulnerabilities/xss_s/source/impossible.php
+vulnerabilities/xss_d/source/impossible.php
+vulnerabilities/fi/source/impossible.php
+vulnerabilities/upload/source/impossible.php
+vulnerabilities/csrf/source/impossible.php
+vulnerabilities/open_redirect/source/impossible.php
+vulnerabilities/weak_id/source/impossible.php
+vulnerabilities/cryptography/source/impossible.php

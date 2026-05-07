@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Recall benchmark for DVWA (PHP).
+# Recall benchmark for OWASP NodeGoat (Node.js).
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/lib.sh"
 
-NAME=dvwa
-URL=${DVWA_REPO:-https://github.com/digininja/DVWA.git}
-REF=${DVWA_REF:-default}
+NAME=nodegoat
+URL=${NODEGOAT_REPO:-https://github.com/OWASP/NodeGoat.git}
+REF=${NODEGOAT_REF:-default}
 
 WORK=${WORK:-$(mktemp -d)}
 TS=$(date +%Y%m%d-%H%M%S)
@@ -30,7 +30,7 @@ recall_pct=$(( covered * 100 / (expected > 0 ? expected : 1) ))
     printf '# %s recall — %s\n\n' "$NAME" "$TS"
     printf 'commit: `%s`\n\n' "$COMMIT"
     printf '**Recall**: %d/%d (%d%%)\n' "$covered" "$expected" "$recall_pct"
-    printf '\n**False positives in safe-by-design files**: %d\n' "$fp"
+    printf '\n**False positives in vendor files**: %d\n' "$fp"
     printf '\nUnified report: `%s`\n' "$REPORT"
 } | tee "$OUT/recall.md"
 
