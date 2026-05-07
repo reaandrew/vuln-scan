@@ -9,16 +9,19 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 KEEP_CLONE=0
 OUTPUT_DIR=""
 TARGET=""
+NO_HOST_CHECK=0
 
 usage() {
     cat <<EOF
-Usage: scan.sh <git-url-or-path> [-o OUTPUT_DIR] [--keep] [--no-spinner]
+Usage: scan.sh <git-url-or-path> [-o OUTPUT_DIR] [--keep] [--no-spinner] [--no-host-check]
 
   <git-url-or-path>  Either a git remote (https://…, git@…, ssh://…)
                      or a local directory.
   -o OUTPUT_DIR      Where to write results (default: ./vuln-scan-<ts>).
   --keep             For git URLs, keep the cloned source after scanning.
   --no-spinner       Plain output (also auto-detected when stderr is not a TTY).
+  --no-host-check    Disable SSH host-key checking entirely. Convenient for
+                     ephemeral scans; default is accept-new (TOFU).
 
 Tool list and category mapping: see README.md
 EOF
@@ -30,6 +33,7 @@ while [[ $# -gt 0 ]]; do
         -o) OUTPUT_DIR="$2"; shift 2 ;;
         --keep) KEEP_CLONE=1; shift ;;
         --no-spinner) export NO_SPINNER=1; shift ;;
+        --no-host-check) NO_HOST_CHECK=1; shift ;;
         -*) die "Unknown option: $1 (try --help)" ;;
         *) [[ -z "$TARGET" ]] && TARGET="$1" || die "Multiple targets given"; shift ;;
     esac
@@ -79,10 +83,14 @@ export STEP_TOTAL=$TOTAL
 log "vuln-scan → $OUTPUT_DIR"
 
 # ── Step: clone ──────────────────────────────────────────────────────────
-# Force git to never prompt; SSH is non-interactive (BatchMode) and unknown
-# hosts get accept-new'd so first-time use doesn't block on a y/n question.
+# Force git to never prompt; SSH is non-interactive (BatchMode). Default is
+# accept-new (TOFU); --no-host-check skips verification entirely.
 export GIT_TERMINAL_PROMPT=0
-export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR}"
+if [ "$NO_HOST_CHECK" = "1" ]; then
+    export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR}"
+else
+    export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new}"
+fi
 
 if [[ "$TARGET_TYPE" == "git" ]]; then
     step_run "clone" "" git clone --depth 1 "$TARGET" "$SCAN_DIR"
