@@ -645,6 +645,118 @@ def parse_tfsec(path: Path, scan_dir: str) -> list[Finding]:
     return out
 
 
+def parse_hadolint(path: Path, scan_dir: str) -> list[Finding]:
+    data = safe_load_json(path)
+    if not data:
+        return []
+    out = []
+    items = data if isinstance(data, list) else data.get("findings", [])
+    for r in items:
+        out.append(Finding(
+            tool="hadolint",
+            rule_id=r.get("code", ""),
+            category="iac_misconfiguration",
+            severity=normalise_severity(r.get("level")),
+            file=relpath(r.get("file", ""), scan_dir),
+            line_start=int(r.get("line", 0) or 0),
+            line_end=int(r.get("line", 0) or 0),
+            message=(r.get("message") or "").strip()[:300],
+            cwe=[],
+        ))
+    return out
+
+
+def parse_psalm(path: Path, scan_dir: str) -> list[Finding]:
+    """psalm --output-format=json: top-level array of issue objects."""
+    data = safe_load_json(path)
+    if not data:
+        return []
+    out = []
+    items = data if isinstance(data, list) else data.get("issues", [])
+    for r in items:
+        kind = r.get("type", "") or r.get("issue", "")
+        # Taint issues start with "Tainted" — those are the ones we want
+        # most (interfile XSS / SQLi / shell etc.). Other Psalm issues are
+        # general type errors; skip them to avoid noise.
+        is_taint = kind.startswith("Tainted")
+        if not is_taint:
+            continue
+        cwe = []
+        if "Sql" in kind:
+            cwe = ["CWE-89"]
+        elif "Html" in kind or "Xss" in kind:
+            cwe = ["CWE-79"]
+        elif "Shell" in kind or "Eval" in kind:
+            cwe = ["CWE-78"]
+        elif "Include" in kind or "File" in kind:
+            cwe = ["CWE-22"]
+        elif "Header" in kind or "Redirect" in kind:
+            cwe = ["CWE-601"]
+        category = category_from_cwe(cwe) or "uncategorized"
+        out.append(Finding(
+            tool="psalm",
+            rule_id=kind,
+            category=category,
+            severity=normalise_severity(r.get("severity") or "high"),
+            file=relpath(r.get("file_path", ""), scan_dir),
+            line_start=int(r.get("line_from", 0) or 0),
+            line_end=int(r.get("line_to", 0) or 0),
+            message=(r.get("message") or "").strip()[:300],
+            cwe=cwe,
+            snippet=(r.get("snippet") or "").strip()[:300],
+            url=(r.get("link") or ""),
+        ))
+    return out
+
+
+def parse_spotbugs(path: Path, scan_dir: str) -> list[Finding]:
+    """spotbugs / find-sec-bugs -xml:withMessages: <BugCollection><BugInstance>…<SourceLine>"""
+    if not path.exists() or path.stat().st_size == 0:
+        return []
+    try:
+        tree = ET.parse(path)
+    except ET.ParseError:
+        return []
+    out = []
+    for bi in tree.iterfind(".//BugInstance"):
+        bug_type = bi.get("type", "")
+        category = "uncategorized"
+        if any(k in bug_type for k in ("SQL_INJECTION", "SQLI")):
+            category = "injection"; cwe = ["CWE-89"]
+        elif any(k in bug_type for k in ("XSS", "HTML_INJECTION")):
+            category = "injection"; cwe = ["CWE-79"]
+        elif "COMMAND_INJECTION" in bug_type:
+            category = "injection"; cwe = ["CWE-78"]
+        elif "PATH_TRAVERSAL" in bug_type:
+            category = "path_network"; cwe = ["CWE-22"]
+        elif "WEAK_HASH" in bug_type or "MD5" in bug_type or "DES" in bug_type:
+            category = "cryptography"; cwe = ["CWE-327"]
+        elif "DESERIALIZATION" in bug_type:
+            category = "deserialization"; cwe = ["CWE-502"]
+        elif "HARD_CODE" in bug_type:
+            category = "secrets"; cwe = ["CWE-798"]
+        else:
+            cwe = []
+        sl = bi.find(".//SourceLine") or bi.find("SourceLine")
+        file_ = sl.get("sourcepath") if sl is not None else ""
+        line_ = int(sl.get("start", "0") or 0) if sl is not None else 0
+        msg = (bi.findtext("LongMessage") or bi.findtext("ShortMessage") or "").strip()
+        priority = bi.get("priority", "2")
+        sev = {"1": "high", "2": "medium", "3": "low"}.get(priority, "medium")
+        out.append(Finding(
+            tool="find-sec-bugs",
+            rule_id=bug_type,
+            category=category,
+            severity=sev,
+            file=relpath(file_, scan_dir),
+            line_start=line_,
+            line_end=line_,
+            message=msg[:300],
+            cwe=cwe,
+        ))
+    return out
+
+
 def parse_regexploit(path: Path, label: str) -> list[Finding]:
     """Best-effort: regexploit emits free text. Each starred regex line is one finding."""
     if not path.exists() or path.stat().st_size == 0:
@@ -764,6 +876,9 @@ def main() -> int:
     findings += parse_brakeman(raw / "brakeman.json", scan_dir)
     findings += parse_retire(raw / "retire.json", scan_dir)
     findings += parse_tfsec(raw / "tfsec.json", scan_dir)
+    findings += parse_hadolint(raw / "hadolint.json", scan_dir)
+    findings += parse_psalm(raw / "psalm.json", scan_dir)
+    findings += parse_spotbugs(raw / "findsecbugs.xml", scan_dir)
     findings += parse_regexploit(raw / "regexploit-py.txt", "py")
     findings += parse_regexploit(raw / "regexploit-js.txt", "js")
 

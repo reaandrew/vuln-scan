@@ -101,6 +101,7 @@ fi
 
 # ── Step: detect languages ───────────────────────────────────────────────
 HAS_PY=0; HAS_GO=0; HAS_C=0; HAS_JS=0; HAS_RB=0; HAS_GO_MOD=0; HAS_TF=0
+HAS_PHP=0; HAS_DOCKER=0; HAS_JVM_BIN=0
 detect_lang_step() {
     detect_lang '-name *.py'                              && HAS_PY=1 || true
     detect_lang '-name *.go'                              && HAS_GO=1 || true
@@ -109,6 +110,9 @@ detect_lang_step() {
     detect_lang '-name *.js -o -name *.jsx -o -name *.ts -o -name *.tsx -o -name *.mjs' && HAS_JS=1 || true
     { [[ -f "$SCAN_DIR/Gemfile" ]] || detect_lang '-name *.rb'; } && HAS_RB=1 || true
     detect_lang '-name *.tf -o -name *.tfvars'            && HAS_TF=1 || true
+    detect_lang '-name *.php'                             && HAS_PHP=1 || true
+    detect_lang '-name Dockerfile -o -name *.Dockerfile'  && HAS_DOCKER=1 || true
+    detect_lang '-name *.class -o -name *.jar'            && HAS_JVM_BIN=1 || true
 }
 step_run "detect" "" detect_lang_step
 
@@ -122,9 +126,12 @@ extra=0
 [[ $HAS_RB -eq 1 ]] && extra=$((extra + 1))     # brakeman
 [[ $HAS_JS -eq 1 ]] && extra=$((extra + 1))     # retire.js
 [[ $HAS_TF -eq 1 ]] && extra=$((extra + 1))     # tfsec
+[[ $HAS_PHP -eq 1 ]] && extra=$((extra + 1))    # psalm
+[[ $HAS_DOCKER -eq 1 ]] && extra=$((extra + 1)) # hadolint
+[[ $HAS_JVM_BIN -eq 1 ]] && extra=$((extra + 1))# spotbugs+find-sec-bugs
 export STEP_TOTAL=$((STEP_TOTAL + extra))
 
-log "detected — py:$HAS_PY go:$HAS_GO(mod:$HAS_GO_MOD) c/cpp:$HAS_C js/ts:$HAS_JS rb:$HAS_RB tf:$HAS_TF  (steps: $STEP_TOTAL)"
+log "detected — py:$HAS_PY go:$HAS_GO(mod:$HAS_GO_MOD) c/cpp:$HAS_C js/ts:$HAS_JS rb:$HAS_RB tf:$HAS_TF php:$HAS_PHP docker:$HAS_DOCKER jvm-bin:$HAS_JVM_BIN  (steps: $STEP_TOTAL)"
 
 # ── Tool steps ───────────────────────────────────────────────────────────
 step_run "semgrep" "$RAW/semgrep.json" \
@@ -132,10 +139,22 @@ step_run "semgrep" "$RAW/semgrep.json" \
         --config p/security-audit \
         --config p/owasp-top-ten \
         --config p/cwe-top-25 \
+        --config p/r2c-security-audit \
         --config p/xss \
-        --config p/php \
+        --config p/sql-injection \
+        --config p/command-injection \
         --config p/insecure-transport \
         --config p/jwt \
+        --config p/secrets \
+        --config p/dockerfile \
+        --config p/php \
+        --config p/python \
+        --config p/django \
+        --config p/flask \
+        --config p/javascript \
+        --config p/typescript \
+        --config p/java \
+        --config p/golang \
         --config "$SCRIPT_DIR/rules" \
         --json --metrics off --quiet \
         --output "$RAW/semgrep.json" "$SCAN_DIR"
@@ -175,6 +194,34 @@ fi
 if [[ $HAS_TF -eq 1 ]] && command -v tfsec >/dev/null; then
     step_run "tfsec" "$RAW/tfsec.json" \
         bash -c "tfsec --no-colour --format json --out '$RAW/tfsec.json' '$SCAN_DIR' 2>/dev/null || true"
+fi
+
+if [[ $HAS_DOCKER -eq 1 ]] && command -v hadolint >/dev/null; then
+    step_run "hadolint" "$RAW/hadolint.json" \
+        bash -c "find '$SCAN_DIR' \( -name Dockerfile -o -name '*.Dockerfile' \) -print0 \
+                 | xargs -0 -r hadolint --format json > '$RAW/hadolint.json' 2>/dev/null || true"
+fi
+
+if [[ $HAS_PHP -eq 1 ]] && command -v psalm >/dev/null; then
+    step_run "psalm" "$RAW/psalm.json" \
+        bash -c "
+            cfg='$OUTPUT_DIR/psalm.xml'
+            cat > \"\$cfg\" <<XML
+<?xml version=\"1.0\"?>
+<psalm errorLevel=\"4\" findUnusedCode=\"false\" findUnusedBaselineEntry=\"false\">
+  <projectFiles><directory name=\"$SCAN_DIR\"/></projectFiles>
+</psalm>
+XML
+            psalm --config=\"\$cfg\" --root='$SCAN_DIR' --taint-analysis \
+                  --output-format=json --no-progress --no-cache --threads=4 \
+                  > '$RAW/psalm.json' 2>/dev/null || true
+        "
+fi
+
+if [[ $HAS_JVM_BIN -eq 1 ]] && command -v findsecbugs >/dev/null; then
+    step_run "find-sec-bugs" "$RAW/findsecbugs.xml" \
+        bash -c "findsecbugs -nested:false -progress -high -xml:withMessages \
+                 -output '$RAW/findsecbugs.xml' '$SCAN_DIR' 2>/dev/null || true"
 fi
 
 if [[ $HAS_C -eq 1 ]]; then

@@ -23,10 +23,15 @@ RUN apt-get update \
         clang-tools \
         cppcheck \
         curl \
+        default-jre-headless \
         flawfinder \
         git \
         golang \
         jq \
+        php-cli \
+        php-curl \
+        php-mbstring \
+        php-xml \
         pipx \
         python3 \
         python3-venv \
@@ -68,6 +73,29 @@ RUN TFS_VER="$(curl -fsSL https://api.github.com/repos/aquasecurity/tfsec/releas
  && curl -fsSL -o /usr/local/bin/tfsec \
         "https://github.com/aquasecurity/tfsec/releases/download/v${TFS_VER}/tfsec-linux-amd64" \
  && chmod +x /usr/local/bin/tfsec
+
+# ── hadolint (Dockerfile linter) ───────────────────────────────────────
+RUN curl -fsSL -o /usr/local/bin/hadolint \
+        https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-x86_64 \
+ && chmod +x /usr/local/bin/hadolint
+
+# ── composer + psalm (PHP taint analysis) ───────────────────────────────
+RUN curl -fsSL https://getcomposer.org/installer | php -- --quiet \
+ && mv composer.phar /usr/local/bin/composer \
+ && composer global require --quiet vimeo/psalm \
+ && ln -sf /root/.composer/vendor/bin/psalm /usr/local/bin/psalm
+
+# ── findsecbugs CLI (standalone JVM SAST; scans .class/.jar) ────────────
+RUN FSB_TAG="$(curl -fsSL https://api.github.com/repos/find-sec-bugs/find-sec-bugs/releases/latest | jq -r .tag_name)" \
+ && FSB_NUM="${FSB_TAG#version-}" \
+ && curl -fsSL -o /tmp/fsb.zip \
+        "https://github.com/find-sec-bugs/find-sec-bugs/releases/download/${FSB_TAG}/findsecbugs-cli-${FSB_NUM}.zip" \
+ && mkdir -p /opt/findsecbugs \
+ && unzip -qo /tmp/fsb.zip -d /opt/findsecbugs \
+ && sed -i 's/\r$//' /opt/findsecbugs/findsecbugs.sh \
+ && chmod +x /opt/findsecbugs/findsecbugs.sh \
+ && ln -sf /opt/findsecbugs/findsecbugs.sh /usr/local/bin/findsecbugs \
+ && rm -f /tmp/fsb.zip
 
 # ── trufflehog (release tarball) ────────────────────────────────────────
 RUN ARCH="$(dpkg --print-architecture)" \

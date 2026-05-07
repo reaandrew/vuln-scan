@@ -45,6 +45,45 @@ if ! command -v tfsec >/dev/null; then
     sudo chmod +x /usr/local/bin/tfsec
 fi
 
+log "hadolint (Dockerfile linter)"
+if ! command -v hadolint >/dev/null; then
+    sudo curl -fsSL -o /usr/local/bin/hadolint \
+        https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-x86_64
+    sudo chmod +x /usr/local/bin/hadolint
+fi
+
+log "PHP + composer + psalm (PHP taint analysis)"
+sudo apt-get install -y --no-install-recommends php-cli php-mbstring php-xml php-curl unzip
+if ! command -v composer >/dev/null; then
+    curl -fsSL https://getcomposer.org/installer | php -- --quiet
+    sudo mv composer.phar /usr/local/bin/composer
+fi
+if ! command -v psalm >/dev/null; then
+    composer global require --quiet vimeo/psalm
+    for cand in \
+        "$HOME/.composer/vendor/bin/psalm" \
+        "$HOME/.config/composer/vendor/bin/psalm" \
+        /root/.composer/vendor/bin/psalm; do
+        [ -x "$cand" ] && { sudo ln -sf "$cand" /usr/local/bin/psalm; break; }
+    done
+fi
+
+log "JDK + findsecbugs-cli (JVM SAST; best-effort, scans .class/.jar)"
+sudo apt-get install -y --no-install-recommends default-jre-headless
+FSB_HOME=/opt/findsecbugs
+if [ ! -x "$FSB_HOME/findsecbugs.sh" ]; then
+    FSB_TAG="$(curl -fsSL https://api.github.com/repos/find-sec-bugs/find-sec-bugs/releases/latest | jq -r .tag_name)"
+    FSB_NUM="${FSB_TAG#version-}"
+    curl -fsSL -o /tmp/fsb.zip \
+        "https://github.com/find-sec-bugs/find-sec-bugs/releases/download/${FSB_TAG}/findsecbugs-cli-${FSB_NUM}.zip"
+    sudo mkdir -p "$FSB_HOME"
+    sudo unzip -qo /tmp/fsb.zip -d "$FSB_HOME"
+    sudo sed -i 's/\r$//' "$FSB_HOME/findsecbugs.sh"
+    sudo chmod +x "$FSB_HOME/findsecbugs.sh"
+    sudo ln -sf "$FSB_HOME/findsecbugs.sh" /usr/local/bin/findsecbugs
+    rm -f /tmp/fsb.zip
+fi
+
 log "trufflehog (release tarball)"
 if ! command -v trufflehog >/dev/null; then
     TH_VER="$(curl -fsSL https://api.github.com/repos/trufflesecurity/trufflehog/releases/latest | jq -r .tag_name | sed 's/^v//')"
