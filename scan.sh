@@ -121,8 +121,16 @@ log "detected — py:$HAS_PY go:$HAS_GO c/cpp:$HAS_C js/ts:$HAS_JS  (steps: $STE
 
 # ── Tool steps ───────────────────────────────────────────────────────────
 step_run "semgrep" "$RAW/semgrep.json" \
-    semgrep scan --config p/security-audit --config p/owasp-top-ten \
-        --config p/cwe-top-25 --json --metrics off --quiet \
+    semgrep scan \
+        --config p/security-audit \
+        --config p/owasp-top-ten \
+        --config p/cwe-top-25 \
+        --config p/xss \
+        --config p/php \
+        --config p/insecure-transport \
+        --config p/jwt \
+        --config "$SCRIPT_DIR/rules" \
+        --json --metrics off --quiet \
         --output "$RAW/semgrep.json" "$SCAN_DIR"
 
 if [[ $HAS_PY -eq 1 ]]; then

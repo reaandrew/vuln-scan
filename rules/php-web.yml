@@ -1,0 +1,78 @@
+rules:
+
+  - id: vuln-scan.php.tainted-concat-html
+    message: "User input concatenated into a string. If echoed elsewhere this is XSS (CWE-79). Use htmlspecialchars / htmlentities or a templating layer."
+    severity: WARNING
+    languages: [php]
+    metadata:
+      cwe: ["CWE-79"]
+      category: security
+    pattern-either:
+      - pattern: $A . $_GET[$K]
+      - pattern: $A . $_POST[$K]
+      - pattern: $A . $_REQUEST[$K]
+      - pattern: $A . $_COOKIE[$K]
+      - pattern: $_GET[$K] . $A
+      - pattern: $_POST[$K] . $A
+      - pattern: $_REQUEST[$K] . $A
+      - pattern: $_COOKIE[$K] . $A
+
+  - id: vuln-scan.php.unrestricted-upload
+    message: "move_uploaded_file with no MIME / extension / pathinfo guard (CWE-434). Whitelist extensions, verify MIME with finfo_file, rename destination."
+    severity: ERROR
+    languages: [php]
+    metadata:
+      cwe: ["CWE-434"]
+      category: security
+    pattern: move_uploaded_file($SRC, $DST)
+
+  - id: vuln-scan.php.open-redirect
+    message: "header(Location) built from user input (CWE-601). Use an allow-list of redirect targets."
+    severity: WARNING
+    languages: [php]
+    metadata:
+      cwe: ["CWE-601"]
+      category: security
+    pattern-either:
+      - pattern: 'header("Location: " . $_GET[$K])'
+      - pattern: 'header("location: " . $_GET[$K])'
+      - pattern: 'header("Location: " . $_POST[$K])'
+      - pattern: 'header("location: " . $_POST[$K])'
+      - pattern: 'header("Location: " . $_REQUEST[$K])'
+
+  - id: vuln-scan.php.weak-session-id-cookie
+    message: "setcookie value is incremented or copied from $_SESSION - predictable session id (CWE-330 / CWE-384). Use random_bytes(32)."
+    severity: WARNING
+    languages: [php]
+    metadata:
+      cwe: ["CWE-330", "CWE-384"]
+      category: security
+    pattern-either:
+      - pattern: |
+          $_SESSION[$K]++;
+          ...
+          setcookie($N, $V);
+      - pattern: |
+          $V = $_SESSION[$K];
+          ...
+          setcookie($N, $V);
+
+  - id: vuln-scan.php.weak-hash-md5-sha1
+    message: "md5/sha1 used in security context (CWE-327 / CWE-916). Use password_hash for passwords, hash_hmac with sha256 for signatures."
+    severity: WARNING
+    languages: [php]
+    metadata:
+      cwe: ["CWE-327", "CWE-916"]
+      category: security
+    pattern-either:
+      - pattern: md5($_POST[$K])
+      - pattern: md5($_GET[$K])
+      - pattern: md5($_REQUEST[$K])
+      - pattern: |
+          $V = md5($X);
+      - pattern: |
+          $V .= md5($X);
+      - pattern: sha1($_POST[$K])
+      - pattern: sha1($_GET[$K])
+      - pattern: |
+          $V = sha1($X);
