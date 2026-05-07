@@ -518,6 +518,77 @@ def parse_checkov(path: Path, scan_dir: str) -> list[Finding]:
     return out
 
 
+def parse_govulncheck(path: Path, scan_dir: str) -> list[Finding]:
+    """govulncheck -json emits NDJSON: one JSON object per line, mixed types."""
+    if not path.exists() or path.stat().st_size == 0:
+        return []
+    findings_by_osv: dict[str, dict] = {}
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if "osv" in obj:
+            v = obj["osv"]
+            findings_by_osv[v.get("id", "")] = v
+        elif "finding" in obj:
+            fnd = obj["finding"]
+            osv_id = fnd.get("osv", "")
+            v = findings_by_osv.get(osv_id, {})
+            # Reachability: if there's a trace, govulncheck found a path that
+            # actually calls the vulnerable function. Without a trace it's
+            # only an import-level match.
+            trace = fnd.get("trace") or []
+            reachable = bool(trace) and bool((trace[0] or {}).get("function"))
+            file_ = ""; line_no = 0
+            if reachable:
+                pos = (trace[0] or {}).get("position") or {}
+                file_ = pos.get("filename", "")
+                line_no = int(pos.get("line", 0) or 0)
+            yield Finding(
+                tool="govulncheck",
+                rule_id=osv_id,
+                category="dependency",
+                severity="high" if reachable else "medium",
+                file=relpath(file_, scan_dir),
+                line_start=line_no,
+                line_end=line_no,
+                message=(v.get("summary") or v.get("details") or "").strip()[:300]
+                        + (" [reachable]" if reachable else " [imported only]"),
+                cwe=[],
+                url=(v.get("references") or [{}])[0].get("url", "") if v.get("references") else "",
+            )
+
+
+def parse_brakeman(path: Path, scan_dir: str) -> list[Finding]:
+    data = safe_load_json(path)
+    if not data:
+        return []
+    out = []
+    for w in data.get("warnings", []) or []:
+        cwes = []
+        for c in w.get("cwe_id", []) or []:
+            cwes.append(f"CWE-{c}")
+        category = category_from_cwe(cwes) or "uncategorized"
+        out.append(Finding(
+            tool="brakeman",
+            rule_id=w.get("warning_code", w.get("warning_type", "")) or "",
+            category=category,
+            severity=normalise_severity(w.get("confidence")),
+            file=relpath(w.get("file", ""), scan_dir),
+            line_start=int(w.get("line", 0) or 0),
+            line_end=int(w.get("line", 0) or 0),
+            message=f'{w.get("warning_type", "")}: {w.get("message", "")}'.strip()[:300],
+            cwe=cwes,
+            snippet=(w.get("code") or "").strip()[:300],
+            url=(w.get("link") or ""),
+        ))
+    return out
+
+
 def parse_regexploit(path: Path, label: str) -> list[Finding]:
     """Best-effort: regexploit emits free text. Each starred regex line is one finding."""
     if not path.exists() or path.stat().st_size == 0:
@@ -633,6 +704,8 @@ def main() -> int:
     findings += parse_osv(raw / "osv.json", scan_dir)
     findings += parse_njsscan(raw / "njsscan.json", scan_dir)
     findings += parse_checkov(raw / "checkov.json", scan_dir)
+    findings += list(parse_govulncheck(raw / "govulncheck.json", scan_dir))
+    findings += parse_brakeman(raw / "brakeman.json", scan_dir)
     findings += parse_regexploit(raw / "regexploit-py.txt", "py")
     findings += parse_regexploit(raw / "regexploit-js.txt", "js")
 

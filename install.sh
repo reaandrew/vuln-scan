@@ -20,9 +20,16 @@ for t in semgrep bandit regexploit; do
 done
 pipx ensurepath >/dev/null
 
-log "go install: gosec (requires Go on PATH)"
-if command -v go >/dev/null && ! command -v gosec >/dev/null; then
-    GOBIN="$HOME/go/bin" go install github.com/securego/gosec/v2/cmd/gosec@latest
+log "go install: gosec, govulncheck (requires Go on PATH)"
+if command -v go >/dev/null; then
+    [ -x "$HOME/go/bin/gosec" ]        || GOBIN="$HOME/go/bin" go install github.com/securego/gosec/v2/cmd/gosec@latest
+    [ -x "$HOME/go/bin/govulncheck" ]  || GOBIN="$HOME/go/bin" go install golang.org/x/vuln/cmd/govulncheck@latest
+fi
+
+log "ruby + brakeman (Rails SAST)"
+sudo apt-get install -y --no-install-recommends ruby ruby-dev
+if ! command -v brakeman >/dev/null; then
+    sudo gem install --no-document brakeman
 fi
 
 log "trufflehog (release tarball)"

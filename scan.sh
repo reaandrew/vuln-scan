@@ -100,12 +100,14 @@ elif git -C "$SCAN_DIR" rev-parse HEAD >/dev/null 2>&1; then
 fi
 
 # ── Step: detect languages ───────────────────────────────────────────────
-HAS_PY=0; HAS_GO=0; HAS_C=0; HAS_JS=0
+HAS_PY=0; HAS_GO=0; HAS_C=0; HAS_JS=0; HAS_RB=0; HAS_GO_MOD=0
 detect_lang_step() {
     detect_lang '-name *.py'                              && HAS_PY=1 || true
-    { [[ -f "$SCAN_DIR/go.mod" ]] || detect_lang '-name *.go'; } && HAS_GO=1 || true
+    detect_lang '-name *.go'                              && HAS_GO=1 || true
+    [[ -f "$SCAN_DIR/go.mod" ]]                           && HAS_GO_MOD=1 || true
     detect_lang '-name *.c -o -name *.cc -o -name *.cpp -o -name *.h -o -name *.hpp' && HAS_C=1 || true
     detect_lang '-name *.js -o -name *.jsx -o -name *.ts -o -name *.tsx -o -name *.mjs' && HAS_JS=1 || true
+    { [[ -f "$SCAN_DIR/Gemfile" ]] || detect_lang '-name *.rb'; } && HAS_RB=1 || true
 }
 step_run "detect" "" detect_lang_step
 
@@ -114,10 +116,12 @@ extra=0
 [[ $HAS_PY -eq 1 ]] && extra=$((extra + 2))     # bandit + regexploit-py
 [[ $HAS_JS -eq 1 ]] && extra=$((extra + 1))     # regexploit-js
 [[ $HAS_GO -eq 1 ]] && extra=$((extra + 1))     # gosec
+[[ $HAS_GO_MOD -eq 1 ]] && extra=$((extra + 1)) # govulncheck
 [[ $HAS_C -eq 1 ]]  && extra=$((extra + 2))     # cppcheck + flawfinder
+[[ $HAS_RB -eq 1 ]] && extra=$((extra + 1))     # brakeman
 export STEP_TOTAL=$((STEP_TOTAL + extra))
 
-log "detected — py:$HAS_PY go:$HAS_GO c/cpp:$HAS_C js/ts:$HAS_JS  (steps: $STEP_TOTAL)"
+log "detected — py:$HAS_PY go:$HAS_GO(mod:$HAS_GO_MOD) c/cpp:$HAS_C js/ts:$HAS_JS rb:$HAS_RB  (steps: $STEP_TOTAL)"
 
 # ── Tool steps ───────────────────────────────────────────────────────────
 step_run "semgrep" "$RAW/semgrep.json" \
@@ -148,6 +152,16 @@ fi
 if [[ $HAS_GO -eq 1 ]]; then
     step_run "gosec" "$RAW/gosec.json" \
         bash -c "cd '$SCAN_DIR' && gosec -fmt json -out '$RAW/gosec.json' -quiet ./..."
+fi
+
+if [[ $HAS_GO_MOD -eq 1 ]] && command -v govulncheck >/dev/null; then
+    step_run "govulncheck" "$RAW/govulncheck.json" \
+        bash -c "cd '$SCAN_DIR' && govulncheck -json ./... > '$RAW/govulncheck.json' 2>/dev/null || true"
+fi
+
+if [[ $HAS_RB -eq 1 ]] && command -v brakeman >/dev/null; then
+    step_run "brakeman" "$RAW/brakeman.json" \
+        bash -c "brakeman --quiet --no-progress -o '$RAW/brakeman.json' -f json '$SCAN_DIR' 2>/dev/null || true"
 fi
 
 if [[ $HAS_C -eq 1 ]]; then

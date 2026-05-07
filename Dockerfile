@@ -30,6 +30,8 @@ RUN apt-get update \
         pipx \
         python3 \
         python3-venv \
+        ruby \
+        ruby-dev \
         unzip \
  && rm -rf /var/lib/apt/lists/*
 
@@ -46,8 +48,12 @@ RUN pipx install --global semgrep \
 ENV GOPATH=/opt/go
 ENV PATH=$PATH:/opt/go/bin
 RUN go install github.com/securego/gosec/v2/cmd/gosec@latest \
+ && go install golang.org/x/vuln/cmd/govulncheck@latest \
  && find /opt/go/pkg -mindepth 1 -delete \
  && rm -rf /root/.cache/go-build
+
+# ── brakeman (Rails SAST) via system gem ────────────────────────────────
+RUN gem install --no-document brakeman
 
 # ── trufflehog (release tarball) ────────────────────────────────────────
 RUN ARCH="$(dpkg --print-architecture)" \
