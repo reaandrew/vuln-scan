@@ -32,6 +32,19 @@ if ! command -v brakeman >/dev/null; then
     sudo gem install --no-document brakeman
 fi
 
+log "retire.js (JS stale-library scanner) via npm"
+if command -v npm >/dev/null && ! command -v retire >/dev/null; then
+    sudo npm install -g retire
+fi
+
+log "tfsec (Terraform IaC scanner)"
+if ! command -v tfsec >/dev/null; then
+    TFS_VER="$(curl -fsSL https://api.github.com/repos/aquasecurity/tfsec/releases/latest | jq -r .tag_name | sed 's/^v//')"
+    sudo curl -fsSL -o /usr/local/bin/tfsec \
+        "https://github.com/aquasecurity/tfsec/releases/download/v${TFS_VER}/tfsec-linux-amd64"
+    sudo chmod +x /usr/local/bin/tfsec
+fi
+
 log "trufflehog (release tarball)"
 if ! command -v trufflehog >/dev/null; then
     TH_VER="$(curl -fsSL https://api.github.com/repos/trufflesecurity/trufflehog/releases/latest | jq -r .tag_name | sed 's/^v//')"

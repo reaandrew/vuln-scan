@@ -1,6 +1,5 @@
-# NodeGoat third-party vendor files — should not produce findings.
-# Tracked here so a regression that floods us with vendor-code noise
-# is visible.
-app/assets/vendor/jquery.min.js
-app/assets/vendor/bootstrap/bootstrap.js
-app/assets/vendor/html5shiv.js
+# NodeGoat files that genuinely should not produce findings.
+# The previous list of vendored old jQuery/Bootstrap was WRONG — those
+# have real CVEs and an SCA tool finding them is desired signal, not
+# noise. Add entries here only if a tool flags something a human review
+# confirms is benign.

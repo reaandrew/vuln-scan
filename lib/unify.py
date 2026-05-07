@@ -589,6 +589,62 @@ def parse_brakeman(path: Path, scan_dir: str) -> list[Finding]:
     return out
 
 
+def parse_retire(path: Path, scan_dir: str) -> list[Finding]:
+    """retire.js --outputformat jsonsimple: array of {file, results: [{component, version, vulnerabilities: [...]}]}."""
+    data = safe_load_json(path)
+    if not data:
+        return []
+    out = []
+    items = data if isinstance(data, list) else [data]
+    for entry in items:
+        file_ = entry.get("file") or ""
+        for r in entry.get("results", []) or []:
+            component = r.get("component") or ""
+            version = r.get("version") or ""
+            for v in r.get("vulnerabilities", []) or []:
+                ids = v.get("identifiers", {}) or {}
+                cves = ids.get("CVE", []) or []
+                cwes = []
+                for c in v.get("cwe", []) or []:
+                    m = re.search(r"CWE-\d+", str(c))
+                    if m:
+                        cwes.append(m.group(0))
+                summary = ids.get("summary") or v.get("summary") or ""
+                out.append(Finding(
+                    tool="retire.js",
+                    rule_id=(cves[0] if cves else f"retire/{component}"),
+                    category="dependency",
+                    severity=normalise_severity(v.get("severity")),
+                    file=relpath(file_, scan_dir),
+                    message=f"{component}@{version}: {summary}".strip()[:300],
+                    cwe=cwes,
+                    url=(v.get("info") or [""])[0] if v.get("info") else "",
+                ))
+    return out
+
+
+def parse_tfsec(path: Path, scan_dir: str) -> list[Finding]:
+    data = safe_load_json(path)
+    if not data:
+        return []
+    out = []
+    for r in data.get("results", []) or []:
+        loc = r.get("location") or {}
+        out.append(Finding(
+            tool="tfsec",
+            rule_id=r.get("rule_id", ""),
+            category="iac_misconfiguration",
+            severity=normalise_severity(r.get("severity")),
+            file=relpath(loc.get("filename", ""), scan_dir),
+            line_start=int(loc.get("start_line", 0) or 0),
+            line_end=int(loc.get("end_line", 0) or 0),
+            message=(r.get("description") or r.get("long_id") or "").strip()[:300],
+            cwe=[],
+            url=(r.get("links") or [""])[0] if r.get("links") else "",
+        ))
+    return out
+
+
 def parse_regexploit(path: Path, label: str) -> list[Finding]:
     """Best-effort: regexploit emits free text. Each starred regex line is one finding."""
     if not path.exists() or path.stat().st_size == 0:
@@ -706,6 +762,8 @@ def main() -> int:
     findings += parse_checkov(raw / "checkov.json", scan_dir)
     findings += list(parse_govulncheck(raw / "govulncheck.json", scan_dir))
     findings += parse_brakeman(raw / "brakeman.json", scan_dir)
+    findings += parse_retire(raw / "retire.json", scan_dir)
+    findings += parse_tfsec(raw / "tfsec.json", scan_dir)
     findings += parse_regexploit(raw / "regexploit-py.txt", "py")
     findings += parse_regexploit(raw / "regexploit-js.txt", "js")
 

@@ -55,6 +55,20 @@ RUN go install github.com/securego/gosec/v2/cmd/gosec@latest \
 # ── brakeman (Rails SAST) via system gem ────────────────────────────────
 RUN gem install --no-document brakeman
 
+# ── Node.js + retire.js (JS stale-library scanner) ──────────────────────
+RUN curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends nodejs \
+ && rm -rf /var/lib/apt/lists/* \
+ && npm install -g retire \
+ && npm cache clean --force
+
+# ── tfsec (Terraform IaC scanner) ───────────────────────────────────────
+RUN TFS_VER="$(curl -fsSL https://api.github.com/repos/aquasecurity/tfsec/releases/latest | jq -r .tag_name | sed 's/^v//')" \
+ && curl -fsSL -o /usr/local/bin/tfsec \
+        "https://github.com/aquasecurity/tfsec/releases/download/v${TFS_VER}/tfsec-linux-amd64" \
+ && chmod +x /usr/local/bin/tfsec
+
 # ── trufflehog (release tarball) ────────────────────────────────────────
 RUN ARCH="$(dpkg --print-architecture)" \
  && TH_VER="$(curl -fsSL https://api.github.com/repos/trufflesecurity/trufflehog/releases/latest | jq -r .tag_name | sed 's/^v//')" \
