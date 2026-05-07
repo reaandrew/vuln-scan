@@ -82,7 +82,7 @@ log "vuln-scan → $OUTPUT_DIR"
 # Force git to never prompt; SSH is non-interactive (BatchMode) and unknown
 # hosts get accept-new'd so first-time use doesn't block on a y/n question.
 export GIT_TERMINAL_PROMPT=0
-export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new}"
+export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR}"
 
 if [[ "$TARGET_TYPE" == "git" ]]; then
     step_run "clone" "" git clone --depth 1 "$TARGET" "$SCAN_DIR"

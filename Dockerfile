@@ -69,13 +69,10 @@ RUN semgrep --config p/security-audit --config p/owasp-top-ten \
             --config p/cwe-top-25 --metrics off --quiet --error \
             --severity ERROR /dev/null >/dev/null 2>&1 || true
 
-# ── Pre-add common SCM hosts to ssh_known_hosts so git+ssh never prompts ─
+# ── ssh client (host-key checking is disabled in scan.sh GIT_SSH_COMMAND) ─
 RUN apt-get update \
  && apt-get install -y --no-install-recommends openssh-client \
- && rm -rf /var/lib/apt/lists/* \
- && install -d -m 0755 /etc/ssh \
- && ssh-keyscan -t rsa,ecdsa,ed25519 github.com gitlab.com bitbucket.org \
-        codeberg.org >> /etc/ssh/ssh_known_hosts 2>/dev/null
+ && rm -rf /var/lib/apt/lists/*
 
 # ── App ────────────────────────────────────────────────────────────────
 WORKDIR /opt/vuln-scan
