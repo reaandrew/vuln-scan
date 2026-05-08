@@ -757,6 +757,85 @@ def parse_spotbugs(path: Path, scan_dir: str) -> list[Finding]:
     return out
 
 
+def parse_joern(path: Path, scan_dir: str) -> list[Finding]:
+    """joern-scan emits one finding per line: 'Result: <severity>: ... <file>:<line>'"""
+    if not path.exists() or path.stat().st_size == 0:
+        return []
+    out = []
+    text = path.read_text(encoding="utf-8", errors="replace")
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or not line.lower().startswith(("result:", "score:")):
+            continue
+        # Try to extract file:line at the end
+        m = re.search(r"([\w./\\-]+):(\d+)\s*$", line)
+        file_ = m.group(1) if m else ""
+        line_no = int(m.group(2)) if m else 0
+        sev_match = re.search(r"^(?:Result|Score):\s*([\d.]+)", line, re.IGNORECASE)
+        try:
+            score = float(sev_match.group(1)) if sev_match else 5.0
+        except ValueError:
+            score = 5.0
+        sev = "high" if score >= 8 else "medium" if score >= 4 else "low"
+        # Heuristic category from message text
+        lower = line.lower()
+        category = "uncategorized"
+        if "sql" in lower or "injection" in lower:
+            category = "injection"
+        elif "xss" in lower:
+            category = "injection"
+        elif "redirect" in lower:
+            category = "path_network"
+        elif "path" in lower and ("traversal" in lower or "..\\" in lower or "../" in lower):
+            category = "path_network"
+        elif "crypto" in lower or "weak hash" in lower or "md5" in lower:
+            category = "cryptography"
+        elif "deser" in lower or "pickle" in lower:
+            category = "deserialization"
+        out.append(Finding(
+            tool="joern",
+            rule_id=line.split(":", 2)[1].strip().split()[0] if ":" in line else "joern",
+            category=category,
+            severity=sev,
+            file=relpath(file_, scan_dir),
+            line_start=line_no,
+            line_end=line_no,
+            message=line[:300],
+        ))
+    return out
+
+
+def parse_phan(path: Path, scan_dir: str) -> list[Finding]:
+    data = safe_load_json(path)
+    if not data:
+        return []
+    out = []
+    items = data if isinstance(data, list) else data.get("issues", [])
+    for r in items:
+        check_name = r.get("check_name") or r.get("type") or ""
+        # Filter: phan emits a *lot* of type errors. Only keep security-relevant
+        # categories so it doesn't drown the unified report. Phan's issue types
+        # starting with "Plugin" or "Security" are the ones we care about; the
+        # rest are general type quality.
+        if not any(k in check_name for k in ("Security", "Plugin", "Taint", "TypeArray", "ClosedArray")):
+            continue
+        loc = r.get("location") or {}
+        path_ = (loc.get("path") or r.get("file") or "")
+        ln = (loc.get("lines") or {}).get("begin") or r.get("line") or 0
+        out.append(Finding(
+            tool="phan",
+            rule_id=check_name,
+            category="uncategorized",
+            severity=normalise_severity(r.get("severity")),
+            file=relpath(path_, scan_dir),
+            line_start=int(ln or 0),
+            line_end=int(ln or 0),
+            message=(r.get("description") or "").strip()[:300],
+            cwe=[],
+        ))
+    return out
+
+
 def parse_regexploit(path: Path, label: str) -> list[Finding]:
     """Best-effort: regexploit emits free text. Each starred regex line is one finding."""
     if not path.exists() or path.stat().st_size == 0:
@@ -879,6 +958,8 @@ def main() -> int:
     findings += parse_hadolint(raw / "hadolint.json", scan_dir)
     findings += parse_psalm(raw / "psalm.json", scan_dir)
     findings += parse_spotbugs(raw / "findsecbugs.xml", scan_dir)
+    findings += parse_joern(raw / "joern.txt", scan_dir)
+    findings += parse_phan(raw / "phan.json", scan_dir)
     findings += parse_regexploit(raw / "regexploit-py.txt", "py")
     findings += parse_regexploit(raw / "regexploit-js.txt", "js")
 

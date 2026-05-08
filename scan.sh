@@ -218,6 +218,34 @@ XML
         "
 fi
 
+if command -v joern-scan >/dev/null; then
+    export STEP_TOTAL=$((STEP_TOTAL + 1))
+    step_run "joern-scan" "$RAW/joern.txt" \
+        bash -c "joern-scan '$SCAN_DIR' > '$RAW/joern.txt' 2>/dev/null || true"
+fi
+
+if [[ $HAS_PHP -eq 1 ]] && command -v phan >/dev/null; then
+    export STEP_TOTAL=$((STEP_TOTAL + 1))
+    step_run "phan" "$RAW/phan.json" \
+        bash -c "
+            mkdir -p '$OUTPUT_DIR/.phan'
+            cat > '$OUTPUT_DIR/.phan/config.php' <<PHP
+<?php
+return [
+    'directory_list' => ['.'],
+    'exclude_analysis_directory_list' => ['vendor/', 'node_modules/'],
+    'plugins' => ['UnusedSuppressionPlugin'],
+    'allow_missing_properties' => true,
+    'null_casts_as_any_type' => true,
+    'unused_variable_detection' => false,
+];
+PHP
+            cd '$SCAN_DIR' && phan --no-progress-bar --output-mode=json \
+                --config-file='$OUTPUT_DIR/.phan/config.php' \
+                --output='$RAW/phan.json' 2>/dev/null || true
+        "
+fi
+
 if [[ $HAS_JVM_BIN -eq 1 ]] && command -v findsecbugs >/dev/null; then
     step_run "find-sec-bugs" "$RAW/findsecbugs.xml" \
         bash -c "findsecbugs -nested:false -progress -high -xml:withMessages \

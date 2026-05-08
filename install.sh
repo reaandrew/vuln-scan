@@ -69,7 +69,31 @@ if ! command -v psalm >/dev/null; then
 fi
 
 log "JDK + findsecbugs-cli (JVM SAST; best-effort, scans .class/.jar)"
-sudo apt-get install -y --no-install-recommends default-jre-headless
+sudo apt-get install -y --no-install-recommends default-jre-headless default-jdk-headless
+log "joern (CPG dataflow analysis, polyglot)"
+JOERN_HOME=/opt/joern
+JOERN_BIN=$JOERN_HOME/joern-cli
+if [ ! -x "$JOERN_BIN/joern" ]; then
+    sudo curl -fsSL -o /tmp/joern-install.sh \
+        https://github.com/joernio/joern/releases/latest/download/joern-install.sh
+    sudo bash /tmp/joern-install.sh --install-dir="$JOERN_HOME" --no-interactive
+fi
+sudo ln -sf "$JOERN_BIN/joern-scan"  /usr/local/bin/joern-scan
+sudo ln -sf "$JOERN_BIN/joern-parse" /usr/local/bin/joern-parse
+sudo ln -sf "$JOERN_BIN/joern"       /usr/local/bin/joern
+
+log "Phan (PHP type-aware analyzer)"
+sudo apt-get install -y --no-install-recommends php-ast || true
+if ! command -v phan >/dev/null; then
+    composer global require --quiet phan/phan
+    for cand in \
+        "$HOME/.composer/vendor/bin/phan" \
+        "$HOME/.config/composer/vendor/bin/phan" \
+        /root/.composer/vendor/bin/phan; do
+        [ -x "$cand" ] && { sudo ln -sf "$cand" /usr/local/bin/phan; break; }
+    done
+fi
+
 FSB_HOME=/opt/findsecbugs
 if [ ! -x "$FSB_HOME/findsecbugs.sh" ]; then
     FSB_TAG="$(curl -fsSL https://api.github.com/repos/find-sec-bugs/find-sec-bugs/releases/latest | jq -r .tag_name)"

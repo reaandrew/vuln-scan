@@ -23,7 +23,9 @@ RUN apt-get update \
         clang-tools \
         cppcheck \
         curl \
+        default-jdk-headless \
         default-jre-headless \
+        php-ast \
         flawfinder \
         git \
         golang \
@@ -84,6 +86,19 @@ RUN curl -fsSL https://getcomposer.org/installer | php -- --quiet \
  && mv composer.phar /usr/local/bin/composer \
  && composer global require --quiet vimeo/psalm \
  && ln -sf /root/.composer/vendor/bin/psalm /usr/local/bin/psalm
+
+# ── Joern (CPG-based polyglot dataflow analysis) ────────────────────────
+RUN curl -fsSL -o /tmp/joern-install.sh \
+        https://github.com/joernio/joern/releases/latest/download/joern-install.sh \
+ && bash /tmp/joern-install.sh --install-dir=/opt/joern --no-interactive \
+ && ln -sf /opt/joern/joern-cli/joern-scan  /usr/local/bin/joern-scan \
+ && ln -sf /opt/joern/joern-cli/joern-parse /usr/local/bin/joern-parse \
+ && ln -sf /opt/joern/joern-cli/joern       /usr/local/bin/joern \
+ && rm -f /tmp/joern-install.sh
+
+# ── Phan (PHP type-aware analyzer) ─────────────────────────────────────
+RUN composer global require --quiet phan/phan \
+ && ln -sf /root/.composer/vendor/bin/phan /usr/local/bin/phan
 
 # ── findsecbugs CLI (standalone JVM SAST; scans .class/.jar) ────────────
 RUN FSB_TAG="$(curl -fsSL https://api.github.com/repos/find-sec-bugs/find-sec-bugs/releases/latest | jq -r .tag_name)" \
