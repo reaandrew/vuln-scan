@@ -10,18 +10,27 @@ KEEP_CLONE=0
 OUTPUT_DIR=""
 TARGET=""
 NO_HOST_CHECK=0
+ENRICH=0
+ENRICH_MODEL="${VULN_SCAN_ENRICH_MODEL:-qwen2.5:3b}"
+OLLAMA_HOST="${VULN_SCAN_OLLAMA_HOST:-http://localhost:11434}"
+ENRICH_LIMIT=0
 
 usage() {
     cat <<EOF
-Usage: scan.sh <git-url-or-path> [-o OUTPUT_DIR] [--keep] [--no-spinner] [--no-host-check]
+Usage: scan.sh <git-url-or-path> [options]
 
   <git-url-or-path>  Either a git remote (https://…, git@…, ssh://…)
                      or a local directory.
   -o OUTPUT_DIR      Where to write results (default: ./vuln-scan-<ts>).
   --keep             For git URLs, keep the cloned source after scanning.
   --no-spinner       Plain output (also auto-detected when stderr is not a TTY).
-  --no-host-check    Disable SSH host-key checking entirely. Convenient for
-                     ephemeral scans; default is accept-new (TOFU).
+  --no-host-check    Disable SSH host-key checking entirely.
+
+  --enrich           Triage findings through a local LLM via Ollama (downloads
+                     the model on first use, then caches).
+  --enrich-model M   Model name (default: qwen2.5:3b).
+  --ollama-host URL  Ollama endpoint (default: http://localhost:11434).
+  --enrich-limit N   Cap LLM calls to the top N findings by severity (0=all).
 
 Tool list and category mapping: see README.md
 EOF
@@ -34,6 +43,10 @@ while [[ $# -gt 0 ]]; do
         --keep) KEEP_CLONE=1; shift ;;
         --no-spinner) export NO_SPINNER=1; shift ;;
         --no-host-check) NO_HOST_CHECK=1; shift ;;
+        --enrich) ENRICH=1; shift ;;
+        --enrich-model) ENRICH_MODEL="$2"; shift 2 ;;
+        --enrich-limit) ENRICH_LIMIT="$2"; shift 2 ;;
+        --ollama-host) OLLAMA_HOST="$2"; shift 2 ;;
         -*) die "Unknown option: $1 (try --help)" ;;
         *) [[ -z "$TARGET" ]] && TARGET="$1" || die "Multiple targets given"; shift ;;
     esac
@@ -294,6 +307,45 @@ step_run "aggregate" "" \
         --target-source "$TARGET_SOURCE" \
         --target-commit "$TARGET_COMMIT" \
         --scan-dir "$SCAN_DIR"
+
+# ── Enrich (initialize → download → activate the LLM, then triage) ───────
+ensure_ollama() {
+    if ! command -v ollama >/dev/null; then
+        die "ollama is not installed (run install.sh, or install via https://ollama.com)"
+    fi
+    if ! curl -sf "$OLLAMA_HOST/api/tags" >/dev/null 2>&1; then
+        log "starting ollama serve"
+        nohup ollama serve >/tmp/vuln-scan-ollama.log 2>&1 &
+        for _ in $(seq 1 30); do
+            sleep 1
+            curl -sf "$OLLAMA_HOST/api/tags" >/dev/null 2>&1 && return 0
+        done
+        die "ollama serve did not become reachable in 30s (see /tmp/vuln-scan-ollama.log)"
+    fi
+}
+
+ensure_model() {
+    if curl -sf "$OLLAMA_HOST/api/tags" \
+        | jq -e --arg m "$ENRICH_MODEL" '.models[]? | select(.name == $m or .name == ($m + ":latest"))' \
+        >/dev/null 2>&1; then
+        return 0
+    fi
+    log "pulling model $ENRICH_MODEL (one-time, ~2GB)"
+    ollama pull "$ENRICH_MODEL" >&2
+}
+
+if [[ $ENRICH -eq 1 ]]; then
+    export STEP_TOTAL=$((STEP_TOTAL + 3))
+    step_run "ollama-init"  "" ensure_ollama
+    step_run "ollama-model" "" ensure_model
+    step_run "enrich" "" \
+        python3 "$SCRIPT_DIR/lib/enrich.py" \
+            --report "$OUTPUT_DIR/report.json" \
+            --scan-dir "$SCAN_DIR" \
+            --model "$ENRICH_MODEL" \
+            --ollama-host "$OLLAMA_HOST" \
+            --limit "$ENRICH_LIMIT"
+fi
 
 # ── Cleanup ──────────────────────────────────────────────────────────────
 if [[ "$TARGET_TYPE" == "git" && $KEEP_CLONE -eq 0 ]]; then

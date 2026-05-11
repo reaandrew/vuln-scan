@@ -139,6 +139,9 @@ RUN install -m 0755 -d /etc/apt/keyrings \
  && apt-get install -y --no-install-recommends trivy \
  && rm -rf /var/lib/apt/lists/*
 
+# ── Ollama (LLM runtime; model is pulled on first --enrich use) ─────────
+RUN curl -fsSL https://ollama.com/install.sh | sh
+
 # ── Pre-fetch core Semgrep rule packs into the image ────────────────────
 RUN semgrep --config p/security-audit --config p/owasp-top-ten \
             --config p/cwe-top-25 --metrics off --quiet --error \

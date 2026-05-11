@@ -51,6 +51,36 @@ release tarball / vendor apt repo.
 ./scan.sh https://github.com/owner/repo.git           # clone + scan
 ./scan.sh /path/to/local/checkout                     # scan in place
 ./scan.sh URL -o /tmp/results --keep                  # custom output, keep clone
+./scan.sh URL --enrich                                # add LLM triage (see below)
+```
+
+### LLM triage (`--enrich`)
+
+Adds a post-scan pass that sends each finding to a local LLM via Ollama
+and tags it with `false_positive_likelihood`, a plain-English
+explanation, and a remediation hint. Three-step init runs only on first
+use:
+
+1. **initialize**: starts `ollama serve` in background if not already
+   running.
+2. **download**: pulls the model on first use (default `qwen2.5:3b`,
+   ~2 GB). Cached under `~/.ollama/models/` on the host or under
+   the Ollama volume in Docker.
+3. **activate**: each finding is enriched in parallel; results cached
+   under `~/.cache/vuln-scan/enrich.json` so re-runs are near-instant.
+
+```sh
+./scan.sh URL --enrich                              # default model
+./scan.sh URL --enrich --enrich-model llama3.2:3b   # override
+./scan.sh URL --enrich --enrich-limit 50            # cap LLM calls
+./scan.sh URL --enrich --ollama-host http://192.0.2.10:11434
+```
+
+For Docker, mount a volume to persist the pulled model across runs:
+
+```sh
+docker run --rm -v ollama-data:/root/.ollama -v "$PWD":/work \
+    ghcr.io/reaandrew/vuln-scan:latest /work --enrich
 ```
 
 Output (default `./vuln-scan-<timestamp>/`):

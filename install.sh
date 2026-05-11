@@ -146,6 +146,11 @@ if ! command -v trivy >/dev/null; then
     sudo apt-get install -y trivy
 fi
 
+log "ollama (LLM runtime; model downloaded on first --enrich use)"
+if ! command -v ollama >/dev/null; then
+    curl -fsSL https://ollama.com/install.sh | sh
+fi
+
 log "warm semgrep rule packs"
 semgrep --config p/security-audit --config p/owasp-top-ten --config p/cwe-top-25 \
     --metrics off --quiet --error --severity ERROR /dev/null >/dev/null 2>&1 || true
