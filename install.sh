@@ -147,6 +147,7 @@ if ! command -v trivy >/dev/null; then
 fi
 
 log "ollama (LLM runtime; model downloaded on first --enrich use)"
+sudo apt-get install -y --no-install-recommends zstd
 if ! command -v ollama >/dev/null; then
     curl -fsSL https://ollama.com/install.sh | sh
 fi

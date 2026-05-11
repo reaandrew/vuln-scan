@@ -40,6 +40,7 @@ RUN apt-get update \
         ruby \
         ruby-dev \
         unzip \
+        zstd \
  && rm -rf /var/lib/apt/lists/*
 
 # ── Pipx tools (semgrep, bandit, regexploit) ────────────────────────────
