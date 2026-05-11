@@ -36,6 +36,7 @@ RUN apt-get update \
         php-xml \
         pipx \
         python3 \
+        python3-pip \
         python3-venv \
         ruby \
         ruby-dev \
