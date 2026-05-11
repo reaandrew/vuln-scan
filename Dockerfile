@@ -50,7 +50,8 @@ RUN pipx install --global semgrep \
  && pipx install --global bandit \
  && pipx install --global regexploit \
  && pipx install --global checkov \
- && pipx install --global njsscan
+ && pipx install --global njsscan \
+ && pip3 install --no-cache-dir --break-system-packages anthropic boto3
 
 # ── gosec via go install (pinned-by-tag for reproducibility) ────────────
 ENV GOPATH=/opt/go

@@ -20,6 +20,10 @@ for t in semgrep bandit regexploit; do
 done
 pipx ensurepath >/dev/null
 
+log "pip: anthropic + boto3 (for --agent providers)"
+pip3 install --user --quiet --upgrade anthropic boto3 2>/dev/null || \
+    python3 -m pip install --user --quiet --upgrade anthropic boto3 --break-system-packages 2>/dev/null || true
+
 log "go install: gosec, govulncheck (requires Go on PATH)"
 if command -v go >/dev/null; then
     [ -x "$HOME/go/bin/gosec" ]        || GOBIN="$HOME/go/bin" go install github.com/securego/gosec/v2/cmd/gosec@latest

@@ -14,6 +14,12 @@ ENRICH=0
 ENRICH_MODEL="${VULN_SCAN_ENRICH_MODEL:-qwen2.5:3b}"
 OLLAMA_HOST="${VULN_SCAN_OLLAMA_HOST:-http://localhost:11434}"
 ENRICH_LIMIT=0
+AGENT=0
+AGENT_PROVIDER="${VULN_SCAN_AGENT_PROVIDER:-anthropic}"
+AGENT_MODEL="${VULN_SCAN_AGENT_MODEL:-}"
+AGENT_MAX_STEPS="${VULN_SCAN_AGENT_MAX_STEPS:-40}"
+AGENT_REGION="${VULN_SCAN_AGENT_REGION:-${AWS_REGION:-}}"
+AGENT_PROFILE="${VULN_SCAN_AGENT_PROFILE:-${AWS_PROFILE:-}}"
 
 usage() {
     cat <<EOF
@@ -32,6 +38,15 @@ Usage: scan.sh <git-url-or-path> [options]
   --ollama-host URL  Ollama endpoint (default: http://localhost:11434).
   --enrich-limit N   Cap LLM calls to the top N findings by severity (0=all).
 
+  --agent            Run an LLM agent that audits files the static scanners
+                     missed. Records new findings into the report.
+  --agent-provider P Provider: anthropic | bedrock | ollama (default: anthropic).
+                     Anthropic needs ANTHROPIC_API_KEY; Bedrock uses AWS creds.
+  --agent-model M    Model name (provider-specific; see lib/providers/*.py).
+  --agent-max-steps N  Cap tool-use iterations (default: 40).
+  --aws-region R     AWS region for bedrock provider.
+  --aws-profile P    AWS profile for bedrock provider.
+
 Tool list and category mapping: see README.md
 EOF
 }
@@ -47,6 +62,12 @@ while [[ $# -gt 0 ]]; do
         --enrich-model) ENRICH_MODEL="$2"; shift 2 ;;
         --enrich-limit) ENRICH_LIMIT="$2"; shift 2 ;;
         --ollama-host) OLLAMA_HOST="$2"; shift 2 ;;
+        --agent) AGENT=1; shift ;;
+        --agent-provider) AGENT_PROVIDER="$2"; shift 2 ;;
+        --agent-model) AGENT_MODEL="$2"; shift 2 ;;
+        --agent-max-steps) AGENT_MAX_STEPS="$2"; shift 2 ;;
+        --aws-region) AGENT_REGION="$2"; shift 2 ;;
+        --aws-profile) AGENT_PROFILE="$2"; shift 2 ;;
         -*) die "Unknown option: $1 (try --help)" ;;
         *) [[ -z "$TARGET" ]] && TARGET="$1" || die "Multiple targets given"; shift ;;
     esac
@@ -345,6 +366,30 @@ if [[ $ENRICH -eq 1 ]]; then
             --model "$ENRICH_MODEL" \
             --ollama-host "$OLLAMA_HOST" \
             --limit "$ENRICH_LIMIT"
+fi
+
+# ── Agent (LLM-driven audit of files the scanners didn't flag) ──────────
+if [[ $AGENT -eq 1 ]]; then
+    AGENT_ARGS=(
+        --scan-dir  "$SCAN_DIR"
+        --report    "$OUTPUT_DIR/report.json"
+        --provider  "$AGENT_PROVIDER"
+        --max-steps "$AGENT_MAX_STEPS"
+    )
+    [[ -n "$AGENT_MODEL"   ]] && AGENT_ARGS+=(--model "$AGENT_MODEL")
+    [[ -n "$AGENT_REGION"  ]] && AGENT_ARGS+=(--bedrock-region "$AGENT_REGION")
+    [[ -n "$AGENT_PROFILE" ]] && AGENT_ARGS+=(--bedrock-profile "$AGENT_PROFILE")
+    [[ "$AGENT_PROVIDER" == "ollama" ]] && AGENT_ARGS+=(--ollama-host "$OLLAMA_HOST")
+
+    if [[ "$AGENT_PROVIDER" == "ollama" ]]; then
+        export STEP_TOTAL=$((STEP_TOTAL + 3))
+        step_run "ollama-init"  "" ensure_ollama
+        ENRICH_MODEL="${AGENT_MODEL:-qwen2.5:7b}" step_run "ollama-model" "" \
+            bash -c 'ENRICH_MODEL="'"${AGENT_MODEL:-qwen2.5:7b}"'" '"$(declare -f ensure_model)"'; ensure_model'
+    else
+        export STEP_TOTAL=$((STEP_TOTAL + 1))
+    fi
+    step_run "agent" "" python3 "$SCRIPT_DIR/lib/agent.py" "${AGENT_ARGS[@]}"
 fi
 
 # ── Cleanup ──────────────────────────────────────────────────────────────

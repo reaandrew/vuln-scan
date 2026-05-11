@@ -83,6 +83,47 @@ docker run --rm -v ollama-data:/root/.ollama -v "$PWD":/work \
     ghcr.io/reaandrew/vuln-scan:latest /work --enrich
 ```
 
+### Agentic mode (`--agent`)
+
+Goes beyond review: an LLM with a small toolbox (`list_files`,
+`read_file`, `search_code`, `record_finding`, `finish`) audits files
+that the static scanners *didn't* flag and records new findings. The
+loop is provider-agnostic; pick which LLM is in the driver's seat:
+
+| Provider | Auth | Default model |
+|---|---|---|
+| `anthropic` (default) | `ANTHROPIC_API_KEY` env var | `claude-sonnet-4-6` |
+| `bedrock` | AWS creds (env, profile, IAM role, aws-vault) | `anthropic.claude-sonnet-4-20250514-v1:0` |
+| `ollama` | none (local) | `qwen2.5:7b` |
+
+```sh
+# Anthropic API
+export ANTHROPIC_API_KEY=sk-ant-...
+./scan.sh URL --agent
+
+# Bedrock with named profile
+./scan.sh URL --agent --agent-provider bedrock \
+    --aws-profile personal --aws-region eu-west-2
+
+# Local Ollama (slower, lower-quality but free + private)
+./scan.sh URL --agent --agent-provider ollama --agent-model qwen2.5:7b
+
+# Tune
+./scan.sh URL --agent --agent-model claude-opus-4-5 --agent-max-steps 80
+```
+
+Agent findings land in `report.json` alongside the static-scanner
+findings, tagged with `tool: "agent:<provider>:<model>"`. A separate
+`agent-trace.json` captures the model's narration step-by-step for
+debugging / auditing.
+
+The agent is bounded:
+- All tools resolve paths through the scan root; nothing reads or
+  writes outside it.
+- `search_code` uses `grep -E`, capped at 30 s and 100 matches.
+- `read_file` caps at 300 lines per call.
+- `--agent-max-steps` caps the tool-use loop.
+
 Output (default `./vuln-scan-<timestamp>/`):
 
 ```
